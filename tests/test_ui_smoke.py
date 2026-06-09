@@ -30,9 +30,9 @@ def test_main_window_renders_account_and_stock_cards(qtbot, sqlite_conn):
     window = MainWindow(draft)
     qtbot.addWidget(window)
 
-    assert "88381.86" in window.total_label.text()
-    assert "55020.0" in window.stock_value_label.text()
-    assert "33361.86" in window.cash_label.text()
+    assert "88,381.86" in window.total_label.text()
+    assert "55,020.00" in window.stock_value_label.text()
+    assert "33,361.86" in window.cash_label.text()
     assert window.opening_amount_label.isHidden()
     assert "股票 3" in window.draft_summary_label.text()
     assert window.tabs.tabText(0) == "全部 3"
@@ -162,11 +162,12 @@ def test_buy_orders_show_amount_and_cash_summary(qtbot, sqlite_conn):
     qtbot.addWidget(window)
     row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
 
-    assert window.opening_amount_label.text() == "开仓金额 9800.00"
+    assert window.opening_amount_label.text() == "开仓金额 9,800.00"
     assert not window.opening_amount_label.isHidden()
-    assert row.amount_label.text() == "金额 9800.00"
+    assert row.amount_label.text() == "金额 9,800.00"
     assert not row.amount_label.isHidden()
+    assert row.status_label.minimumWidth() >= 84
 
     row.shares_input.set_value(2000)
 
-    assert row.amount_label.text() == "金额 19600.00"
+    assert row.amount_label.text() == "金额 19,600.00"

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from ptrade_order_tool.models import OrderDraft, OrderType
 from ptrade_order_tool.ui.digit_input import DigitInput
@@ -55,17 +55,20 @@ class OrderRow(QWidget):
 
         self.status_label = QLabel(self._status_text())
         self.status_label.setObjectName("order_status_label")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setMinimumWidth(84)
+        self.status_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.amount_label = QLabel("")
         self.amount_label.setObjectName("order_amount_label")
 
         self.confirm_button = QPushButton("确认" if not order.confirmed else "已确认")
         self.confirm_button.setObjectName("order_confirm_button")
-        self.confirm_button.setFixedWidth(64)
+        self.confirm_button.setFixedWidth(70)
         self.confirm_button.clicked.connect(lambda: self.confirmRequested.emit(self))
 
         self.delete_button = QPushButton("删除")
         self.delete_button.setObjectName("order_delete_button")
-        self.delete_button.setFixedWidth(58)
+        self.delete_button.setFixedWidth(64)
         self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self))
 
         top_row = QWidget()
@@ -127,7 +130,6 @@ class OrderRow(QWidget):
             QLabel#order_status_label {{
                 color: {color};
                 font-weight: 600;
-                min-width: 72px;
             }}
             QLabel#order_field_label {{
                 color: #5b6470;
@@ -150,7 +152,7 @@ class OrderRow(QWidget):
             self.amount_label.hide()
             return
         amount = self.selected_price() * Decimal(self.selected_shares())
-        self.amount_label.setText(f"金额 {amount:.2f}")
+        self.amount_label.setText(f"金额 {amount:,.2f}")
         self.amount_label.show()
 
     def set_read_only(self, read_only: bool) -> None:

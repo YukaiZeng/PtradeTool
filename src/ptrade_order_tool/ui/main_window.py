@@ -225,15 +225,15 @@ class MainWindow(QMainWindow):
 
     def set_draft(self, draft: SessionDraft) -> None:
         self.draft = draft
-        self.total_label.setText(f"总额 {draft.fund.portfolio_value}")
-        self.stock_value_label.setText(f"股票市值 {draft.fund.stock_positions_value}")
+        self.total_label.setText(f"总额 {self._format_money(draft.fund.portfolio_value)}")
+        self.stock_value_label.setText(f"股票市值 {self._format_money(draft.fund.stock_positions_value)}")
         opening_amount = self._opening_order_amount(draft)
         if opening_amount:
-            self.opening_amount_label.setText(f"开仓金额 {opening_amount:.2f}")
+            self.opening_amount_label.setText(f"开仓金额 {self._format_money(opening_amount)}")
             self.opening_amount_label.show()
         else:
             self.opening_amount_label.hide()
-        self.cash_label.setText(f"可用余额 {draft.fund.calibrated_cash}")
+        self.cash_label.setText(f"可用余额 {self._format_money(draft.fund.calibrated_cash)}")
         self._refresh_draft_summary()
         self.refresh_date_combo()
 
@@ -286,6 +286,9 @@ class MainWindow(QMainWindow):
                 if order.order_type in {"buy_stop", "buy_limit"}:
                     total += order.price * Decimal(order.shares)
         return total
+
+    def _format_money(self, value: Decimal) -> str:
+        return f"{value:,.2f}"
 
     def _refresh_tab_titles(self) -> None:
         if not self.draft:

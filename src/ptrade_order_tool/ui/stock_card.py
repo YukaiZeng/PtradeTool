@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -85,6 +85,8 @@ class StockCard(QFrame):
         if unconfirmed_count:
             pending_badge = QLabel(f"{unconfirmed_count} 个待确认")
             pending_badge.setObjectName("pending_order_badge")
+            pending_badge.setAlignment(Qt.AlignCenter)
+            pending_badge.setMinimumWidth(84)
             header_layout.addWidget(pending_badge)
 
         warning_texts = self._warning_texts(grouped)

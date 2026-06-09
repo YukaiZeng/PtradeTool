@@ -55,6 +55,8 @@ class OrderRow(QWidget):
 
         self.status_label = QLabel(self._status_text())
         self.status_label.setObjectName("order_status_label")
+        self.amount_label = QLabel("")
+        self.amount_label.setObjectName("order_amount_label")
 
         self.confirm_button = QPushButton("确认" if not order.confirmed else "已确认")
         self.confirm_button.setObjectName("order_confirm_button")
@@ -89,11 +91,15 @@ class OrderRow(QWidget):
         self.shares_label.setObjectName("order_field_label")
         value_layout.addWidget(self.shares_label)
         value_layout.addWidget(self.shares_input)
+        value_layout.addWidget(self.amount_label)
         value_layout.addStretch(1)
         layout.addWidget(value_row)
 
         self._apply_color()
-        self.type_combo.currentIndexChanged.connect(self._apply_color)
+        self._refresh_amount()
+        self.type_combo.currentIndexChanged.connect(self._handle_type_changed)
+        self.price_input.valueChanged.connect(self._refresh_amount)
+        self.shares_input.valueChanged.connect(self._refresh_amount)
         self.set_read_only(read_only)
 
     def selected_order_type(self) -> OrderType:
@@ -127,8 +133,25 @@ class OrderRow(QWidget):
                 color: #5b6470;
                 font-weight: 600;
             }}
+            QLabel#order_amount_label {{
+                color: #334155;
+                font-weight: 700;
+                padding-left: 6px;
+            }}
             """
         )
+
+    def _handle_type_changed(self) -> None:
+        self._apply_color()
+        self._refresh_amount()
+
+    def _refresh_amount(self) -> None:
+        if self.selected_order_type() not in {"buy_stop", "buy_limit"}:
+            self.amount_label.hide()
+            return
+        amount = self.selected_price() * Decimal(self.selected_shares())
+        self.amount_label.setText(f"金额 {amount:.2f}")
+        self.amount_label.show()
 
     def set_read_only(self, read_only: bool) -> None:
         self.read_only = read_only

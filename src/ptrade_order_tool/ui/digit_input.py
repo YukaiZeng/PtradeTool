@@ -13,7 +13,8 @@ class DigitButton(QPushButton):
     def __init__(self, index: int, digit: str, parent: QWidget | None = None) -> None:
         super().__init__(digit, parent)
         self.index = index
-        self.setFixedSize(28, 34)
+        self.setObjectName("digit_button")
+        self.setFixedSize(26, 30)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
 
@@ -162,7 +163,11 @@ class DigitInput(QWidget):
             editable_index += 1
 
         if self.kind == "price":
-            self._layout.addWidget(QLabel("."))
+            dot_label = QLabel(".")
+            dot_label.setObjectName("digit_decimal_point")
+            dot_label.setAlignment(Qt.AlignCenter)
+            dot_label.setFixedSize(8, 30)
+            self._layout.addWidget(dot_label)
             for digit in self._fraction_digits:
                 button = DigitButton(editable_index, digit, self)
                 button.digitChanged.connect(self.set_digit)
@@ -179,6 +184,6 @@ class DigitInput(QWidget):
 
     def _update_fixed_width(self) -> None:
         digit_count = len(self._integer_digits) + len(self._fraction_digits)
-        dot_width = 10 if self.kind == "price" else 0
-        width = digit_count * 28 + max(0, digit_count - 1) * 2 + dot_width
+        dot_width = 8 if self.kind == "price" else 0
+        width = digit_count * 26 + max(0, digit_count - 1) * 2 + dot_width
         self.setFixedWidth(width)

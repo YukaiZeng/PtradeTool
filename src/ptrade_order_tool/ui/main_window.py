@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -100,6 +101,9 @@ class MainWindow(QMainWindow):
         self.stock_value_label.setObjectName("account_stock_value_label")
         self.cash_label = QLabel("可用余额 --")
         self.cash_label.setObjectName("account_cash_label")
+        self.opening_amount_label = QLabel("开仓金额 --")
+        self.opening_amount_label.setObjectName("account_opening_amount_label")
+        self.opening_amount_label.hide()
         self.draft_summary_label = QLabel("股票 -- | 待确认 --")
         self.draft_summary_label.setObjectName("draft_summary_label")
         self.stock_update_button = QPushButton("生成股票基础数据")
@@ -120,12 +124,12 @@ class MainWindow(QMainWindow):
         self.undo_delete_button.clicked.connect(self._handle_undo_delete)
         self.status_label = QLabel("")
         self.status_label.setObjectName("startup_status_label")
-        self.status_label.setMinimumWidth(180)
 
         account_layout.addWidget(self.date_combo)
         account_layout.addWidget(self.total_label)
         account_layout.addWidget(self.stock_value_label)
         account_layout.addWidget(self.cash_label)
+        account_layout.addWidget(self.opening_amount_label)
         account_layout.addWidget(self.draft_summary_label)
         account_layout.addWidget(self.status_label)
         account_layout.addStretch(1)
@@ -223,6 +227,12 @@ class MainWindow(QMainWindow):
         self.draft = draft
         self.total_label.setText(f"总额 {draft.fund.portfolio_value}")
         self.stock_value_label.setText(f"股票市值 {draft.fund.stock_positions_value}")
+        opening_amount = self._opening_order_amount(draft)
+        if opening_amount:
+            self.opening_amount_label.setText(f"开仓金额 {opening_amount:.2f}")
+            self.opening_amount_label.show()
+        else:
+            self.opening_amount_label.hide()
         self.cash_label.setText(f"可用余额 {draft.fund.calibrated_cash}")
         self._refresh_draft_summary()
         self.refresh_date_combo()
@@ -244,6 +254,7 @@ class MainWindow(QMainWindow):
         self._apply_read_only_state()
 
     def _render_empty_state(self) -> None:
+        self.opening_amount_label.hide()
         self.draft_summary_label.setText("股票 -- | 待确认 --")
         self.tabs.setTabText(0, "全部")
         self.tabs.setTabText(1, "开仓")
@@ -260,17 +271,21 @@ class MainWindow(QMainWindow):
             self.draft_summary_label.setText("股票 -- | 待确认 --")
             return
         total = len(self.draft.stocks)
-        holding = sum(1 for stock in self.draft.stocks if stock.is_holding)
-        opening = total - holding
         unconfirmed = sum(1 for stock in self.draft.stocks for order in stock.orders if not order.confirmed)
         state_text = {
             "draft": "草稿",
             "exported": "已导出",
             "modified_after_export": "导出后修改",
         }.get(self.draft.export_state, self.draft.export_state)
-        self.draft_summary_label.setText(
-            f"股票 {total} | 持仓 {holding} | 开仓 {opening} | 待确认 {unconfirmed} | {state_text}"
-        )
+        self.draft_summary_label.setText(f"股票 {total} | 待确认 {unconfirmed} | {state_text}")
+
+    def _opening_order_amount(self, draft: SessionDraft) -> Decimal:
+        total = Decimal("0")
+        for stock in draft.stocks:
+            for order in stock.orders:
+                if order.order_type in {"buy_stop", "buy_limit"}:
+                    total += order.price * Decimal(order.shares)
+        return total
 
     def _refresh_tab_titles(self) -> None:
         if not self.draft:

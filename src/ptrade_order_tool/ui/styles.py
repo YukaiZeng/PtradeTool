@@ -17,6 +17,7 @@ QLabel {
 QLabel#account_total_label,
 QLabel#account_stock_value_label,
 QLabel#account_cash_label,
+QLabel#account_opening_amount_label,
 QLabel#draft_summary_label {
     background: #ffffff;
     border: 1px solid #d6dbe3;
@@ -35,6 +36,10 @@ QLabel#account_stock_value_label {
 
 QLabel#account_cash_label {
     color: #7c3aed;
+}
+
+QLabel#account_opening_amount_label {
+    color: #2563eb;
 }
 
 QLabel#draft_summary_label {
@@ -73,6 +78,30 @@ QPushButton#manual_import_button {
 QPushButton:disabled {
     background: #eef0f3;
     color: #8a929c;
+}
+
+QPushButton#digit_button {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 5px;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 600;
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+}
+
+QPushButton#digit_button:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+}
+
+QLabel#digit_decimal_point {
+    color: #475569;
+    font-size: 18px;
+    font-weight: 700;
+    padding-top: 8px;
 }
 
 QLineEdit, QComboBox {

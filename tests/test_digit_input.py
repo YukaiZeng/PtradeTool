@@ -10,6 +10,8 @@ def test_price_input_defaults_to_four_digits_and_two_decimals(qtbot):
     assert widget.text() == "0000.00"
     assert widget.value() == Decimal("0.00")
     assert widget.is_valid() is False
+    assert widget._buttons[0].width() == 26
+    assert widget._buttons[0].height() == 30
 
 
 def test_share_input_defaults_to_four_digits(qtbot):

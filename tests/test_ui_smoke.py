@@ -33,6 +33,7 @@ def test_main_window_renders_account_and_stock_cards(qtbot, sqlite_conn):
     assert "88381.86" in window.total_label.text()
     assert "55020.0" in window.stock_value_label.text()
     assert "33361.86" in window.cash_label.text()
+    assert window.opening_amount_label.isHidden()
     assert "股票 3" in window.draft_summary_label.text()
     assert window.tabs.tabText(0) == "全部 3"
     assert window.tabs.tabText(1) == "开仓 0"
@@ -143,3 +144,29 @@ def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
     assert any("止盈合计 1400" in item for item in warnings)
     assert "已确认" in statuses
     assert pending_badges == []
+    assert all(row.amount_label.isHidden() for row in window.findChildren(OrderRow))
+
+
+def test_buy_orders_show_amount_and_cash_summary(qtbot, sqlite_conn):
+    initialize_schema(sqlite_conn)
+    imported = parse_ptrade_json(PTRADER_FIXTURE, FakeStockMatcher())
+    store = DraftStore(sqlite_conn)
+    draft = store.create_draft(
+        imported,
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+    )
+    order_id = store.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_stop", Decimal("9.80"), 1000)
+    window = MainWindow(store.load_draft("20260225"))
+    qtbot.addWidget(window)
+    row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+
+    assert window.opening_amount_label.text() == "开仓金额 9800.00"
+    assert not window.opening_amount_label.isHidden()
+    assert row.amount_label.text() == "金额 9800.00"
+    assert not row.amount_label.isHidden()
+
+    row.shares_input.set_value(2000)
+
+    assert row.amount_label.text() == "金额 19600.00"

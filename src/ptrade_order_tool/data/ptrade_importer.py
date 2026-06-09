@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import json
+import re
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Protocol
+
+from ptrade_order_tool.models import FundSnapshot, Holding, ImportedPtradeData
+
+
+class PtradeImportError(ValueError):
+    pass
+
+
+class StockMatcher(Protocol):
+    def resolve_stock(self, query: str) -> dict[str, str] | None:
+        """Return a stock row with ts_code/symbol/name, or None."""
+
+
+def parse_ptrade_json(path: Path, stock_matcher: StockMatcher) -> ImportedPtradeData:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    manage_date = _date_from_filename(path)
+
+    fund_data = _require_mapping(data, "Fund")
+    hold_data = _require_mapping(data, "Hold")
+
+    raw_cash = _decimal_field(fund_data, "cash")
+    raw_positions_value = _decimal_field(fund_data, "positions_value")
+    raw_portfolio_value = _decimal_field(fund_data, "portfolio_value")
+
+    holdings: list[Holding] = []
+    stock_positions_value = Decimal("0")
+    non_stock_market_value = Decimal("0")
+
+    for raw_key, raw_holding in hold_data.items():
+        if not isinstance(raw_holding, dict):
+            raise PtradeImportError(f"Hold.{raw_key} must be an object")
+
+        stock_code = str(raw_holding.get("stock_code", raw_key)).strip()
+        stock_row = stock_matcher.resolve_stock(str(raw_key)) or stock_matcher.resolve_stock(stock_code)
+        market_value = _decimal_value(raw_holding.get("market_value", 0))
+
+        if not stock_row:
+            non_stock_market_value += market_value
+            continue
+
+        holding = Holding(
+            ts_code=str(stock_row["ts_code"]),
+            stock_code=stock_code,
+            stock_name=str(raw_holding.get("stock_name") or stock_row["name"]),
+            current_amount=_int_amount(raw_holding.get("current_amount"), f"Hold.{raw_key}.current_amount"),
+            enable_amount=_int_amount(raw_holding.get("enable_amount"), f"Hold.{raw_key}.enable_amount"),
+            last_price=_decimal_value(raw_holding.get("last_price", 0)),
+            cost_price=_decimal_value(raw_holding.get("cost_price", 0)),
+            market_value=market_value,
+            profit_ratio=_decimal_value(raw_holding.get("profit_ratio", 0)),
+            income_balance=_decimal_value(raw_holding.get("income_balance", 0)),
+            is_stock=True,
+        )
+        holdings.append(holding)
+        stock_positions_value += holding.market_value
+
+    fund = FundSnapshot(
+        cash=raw_cash,
+        positions_value=raw_positions_value,
+        portfolio_value=raw_portfolio_value,
+        stock_positions_value=stock_positions_value,
+        calibrated_cash=raw_cash + non_stock_market_value,
+    )
+    return ImportedPtradeData(manage_date=manage_date, fund=fund, holdings=holdings)
+
+
+def _date_from_filename(path: Path) -> str:
+    match = re.search(r"(\d{8})", path.stem)
+    if not match:
+        raise PtradeImportError(f"Ptrade JSON filename must be YYYYMMDD: {path.name}")
+    return match.group(1)
+
+
+def _require_mapping(data: Any, key: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise PtradeImportError("Ptrade JSON root must be an object")
+    value = data.get(key)
+    if not isinstance(value, dict):
+        raise PtradeImportError(f"Ptrade JSON missing object field: {key}")
+    return value
+
+
+def _decimal_field(data: dict[str, Any], key: str) -> Decimal:
+    if key not in data:
+        raise PtradeImportError(f"Fund missing field: {key}")
+    return _decimal_value(data[key])
+
+
+def _decimal_value(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except Exception as exc:
+        raise PtradeImportError(f"Invalid decimal value: {value!r}") from exc
+
+
+def _int_amount(value: Any, field_name: str) -> int:
+    if value is None:
+        raise PtradeImportError(f"{field_name} is required")
+    decimal_value = _decimal_value(value)
+    if decimal_value < 0 or decimal_value != decimal_value.to_integral_value():
+        raise PtradeImportError(f"{field_name} must be a non-negative integer")
+    return int(decimal_value)

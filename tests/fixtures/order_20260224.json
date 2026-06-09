@@ -1,0 +1,24 @@
+{
+  "002153.SZ": {
+    "stock_name": "石基信息",
+    "sell_profit": [
+      {
+        "price": 12.65,
+        "shares": 2800
+      }
+    ],
+    "sell_loss": [
+      {
+        "price": 10.99,
+        "shares": 2800
+      }
+    ],
+    "buy_limit": [
+      {
+        "price": 11.4,
+        "shares": 1400
+      }
+    ]
+  }
+}
+

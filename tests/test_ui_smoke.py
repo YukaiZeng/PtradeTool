@@ -33,8 +33,15 @@ def test_main_window_renders_account_and_stock_cards(qtbot, sqlite_conn):
     assert "88381.86" in window.total_label.text()
     assert "55020.0" in window.stock_value_label.text()
     assert "33361.86" in window.cash_label.text()
+    assert "股票 3" in window.draft_summary_label.text()
+    assert window.tabs.tabText(0) == "全部 3"
+    assert window.tabs.tabText(1) == "开仓 0"
+    assert window.tabs.tabText(2) == "持仓 3"
     assert window.findChildren(StockCard)
     assert window.findChildren(type(window.total_label), "stock_card_header")
+    assert window.findChildren(type(window.total_label), "stock_metric_chip")
+    assert window.findChildren(type(window.total_label), "stock_type_badge")
+    assert window.findChildren(type(window.total_label), "empty_order_label")
 
 
 def test_main_window_filters_out_standard_bond(qtbot, sqlite_conn):
@@ -69,6 +76,15 @@ def test_stock_update_button_states(qtbot):
     window.set_stock_update_state("update_disabled_non_trade_day")
     assert window.stock_update_button.text() == "更新股票基础数据"
     assert window.stock_update_button.isEnabled() is False
+
+
+def test_main_window_empty_state(qtbot):
+    window = MainWindow(auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+
+    labels = [label.text() for label in window.findChildren(type(window.total_label), "empty_state_label")]
+
+    assert any("未打开盘后数据" in text for text in labels)
 
 
 def test_auto_update_runs_when_stock_data_missing(qtbot, monkeypatch):
@@ -122,6 +138,8 @@ def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
 
     warnings = [label.text() for label in window.findChildren(type(window.total_label), "stock_card_warning")]
     statuses = [row.status_label.text() for row in window.findChildren(OrderRow)]
+    pending_badges = [label.text() for label in window.findChildren(type(window.total_label), "pending_order_badge")]
 
     assert any("止盈合计 1400" in item for item in warnings)
     assert "已确认" in statuses
+    assert pending_badges == []

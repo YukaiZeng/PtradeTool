@@ -26,6 +26,11 @@ class FakeStockMatcher:
         return self.rows.get(query)
 
 
+class EmptyStockMatcher:
+    def resolve_stock(self, query: str):
+        return None
+
+
 def test_parse_ptrade_json_calibrates_account_values():
     result = parse_ptrade_json(FIXTURE, FakeStockMatcher())
 
@@ -46,6 +51,18 @@ def test_parse_ptrade_json_filters_non_stock_assets():
         "300251.SZ",
     ]
     assert all(holding.stock_name != "标准券" for holding in result.holdings)
+
+
+def test_parse_ptrade_json_falls_back_to_ptrade_stock_fields_when_stock_cache_empty():
+    result = parse_ptrade_json(FIXTURE, EmptyStockMatcher())
+
+    assert [holding.ts_code for holding in result.holdings] == [
+        "002153.SZ",
+        "300162.SZ",
+        "300251.SZ",
+    ]
+    assert result.fund.stock_positions_value == Decimal("55020.0")
+    assert result.fund.calibrated_cash == Decimal("33361.86")
 
 
 def test_parse_ptrade_json_converts_amounts_to_ints():

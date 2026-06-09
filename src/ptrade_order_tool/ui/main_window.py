@@ -100,6 +100,8 @@ class MainWindow(QMainWindow):
         self.stock_value_label.setObjectName("account_stock_value_label")
         self.cash_label = QLabel("可用余额 --")
         self.cash_label.setObjectName("account_cash_label")
+        self.draft_summary_label = QLabel("股票 -- | 待确认 --")
+        self.draft_summary_label.setObjectName("draft_summary_label")
         self.stock_update_button = QPushButton("生成股票基础数据")
         self.stock_update_button.setObjectName("stock_update_button")
         self.stock_update_button.clicked.connect(self._handle_stock_update)
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
         account_layout.addWidget(self.total_label)
         account_layout.addWidget(self.stock_value_label)
         account_layout.addWidget(self.cash_label)
+        account_layout.addWidget(self.draft_summary_label)
         account_layout.addWidget(self.status_label)
         account_layout.addStretch(1)
         layout.addWidget(self.account_bar)
@@ -156,6 +159,8 @@ class MainWindow(QMainWindow):
 
         if draft:
             self.set_draft(draft)
+        else:
+            self._render_empty_state()
         self.refresh_stock_update_button()
         self.refresh_date_combo()
         if auto_update_stock_basic:
@@ -219,6 +224,7 @@ class MainWindow(QMainWindow):
         self.total_label.setText(f"总额 {draft.fund.portfolio_value}")
         self.stock_value_label.setText(f"股票市值 {draft.fund.stock_positions_value}")
         self.cash_label.setText(f"可用余额 {draft.fund.calibrated_cash}")
+        self._refresh_draft_summary()
         self.refresh_date_combo()
 
         for _, content, layout in (self.all_tab, self.opening_tab, self.holding_tab):
@@ -234,7 +240,47 @@ class MainWindow(QMainWindow):
         for _, _, tab_layout in (self.all_tab, self.opening_tab, self.holding_tab):
             tab_layout.addStretch(1)
 
+        self._refresh_tab_titles()
         self._apply_read_only_state()
+
+    def _render_empty_state(self) -> None:
+        self.draft_summary_label.setText("股票 -- | 待确认 --")
+        self.tabs.setTabText(0, "全部")
+        self.tabs.setTabText(1, "开仓")
+        self.tabs.setTabText(2, "持仓")
+        for _, _, tab_layout in (self.all_tab, self.opening_tab, self.holding_tab):
+            self._clear_layout(tab_layout)
+            empty_label = QLabel("未打开盘后数据。请先设置 PTrade 盘后目录，或点击“手动导入”。")
+            empty_label.setObjectName("empty_state_label")
+            tab_layout.addWidget(empty_label)
+            tab_layout.addStretch(1)
+
+    def _refresh_draft_summary(self) -> None:
+        if not self.draft:
+            self.draft_summary_label.setText("股票 -- | 待确认 --")
+            return
+        total = len(self.draft.stocks)
+        holding = sum(1 for stock in self.draft.stocks if stock.is_holding)
+        opening = total - holding
+        unconfirmed = sum(1 for stock in self.draft.stocks for order in stock.orders if not order.confirmed)
+        state_text = {
+            "draft": "草稿",
+            "exported": "已导出",
+            "modified_after_export": "导出后修改",
+        }.get(self.draft.export_state, self.draft.export_state)
+        self.draft_summary_label.setText(
+            f"股票 {total} | 持仓 {holding} | 开仓 {opening} | 待确认 {unconfirmed} | {state_text}"
+        )
+
+    def _refresh_tab_titles(self) -> None:
+        if not self.draft:
+            return
+        total = len(self.draft.stocks)
+        holding = sum(1 for stock in self.draft.stocks if stock.is_holding)
+        opening = total - holding
+        self.tabs.setTabText(0, f"全部 {total}")
+        self.tabs.setTabText(1, f"开仓 {opening}")
+        self.tabs.setTabText(2, f"持仓 {holding}")
 
     def _make_scroll_tab(self):
         scroll = QScrollArea()

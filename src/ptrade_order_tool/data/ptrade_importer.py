@@ -38,7 +38,11 @@ def parse_ptrade_json(path: Path, stock_matcher: StockMatcher) -> ImportedPtrade
             raise PtradeImportError(f"Hold.{raw_key} must be an object")
 
         stock_code = str(raw_holding.get("stock_code", raw_key)).strip()
-        stock_row = stock_matcher.resolve_stock(str(raw_key)) or stock_matcher.resolve_stock(stock_code)
+        stock_row = (
+            stock_matcher.resolve_stock(str(raw_key))
+            or stock_matcher.resolve_stock(stock_code)
+            or _fallback_stock_row(str(raw_key), stock_code, raw_holding)
+        )
         market_value = _decimal_value(raw_holding.get("market_value", 0))
 
         if not stock_row:
@@ -107,3 +111,38 @@ def _int_amount(value: Any, field_name: str) -> int:
     if decimal_value < 0 or decimal_value != decimal_value.to_integral_value():
         raise PtradeImportError(f"{field_name} must be a non-negative integer")
     return int(decimal_value)
+
+
+def _fallback_stock_row(raw_key: str, stock_code: str, raw_holding: dict[str, Any]) -> dict[str, str] | None:
+    stock_name = str(raw_holding.get("stock_name") or "").strip()
+    stock_type = str(raw_holding.get("stock_type", "")).strip()
+    if stock_type == "9" or "标准券" in stock_name:
+        return None
+    symbol = _symbol_from_code(stock_code or raw_key)
+    if not symbol:
+        return None
+    suffix = _market_suffix(symbol)
+    if not suffix:
+        return None
+    return {
+        "ts_code": f"{symbol}.{suffix}",
+        "symbol": symbol,
+        "name": stock_name or symbol,
+    }
+
+
+def _symbol_from_code(code: str) -> str:
+    text = code.strip().upper()
+    if "." in text:
+        text = text.split(".", 1)[0]
+    return text if re.fullmatch(r"\d{6}", text) else ""
+
+
+def _market_suffix(symbol: str) -> str:
+    if symbol.startswith(("00", "30")):
+        return "SZ"
+    if symbol.startswith(("60", "68")):
+        return "SH"
+    if symbol.startswith(("83", "87", "92")):
+        return "BJ"
+    return ""

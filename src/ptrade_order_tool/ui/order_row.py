@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ptrade_order_tool.models import OrderDraft, OrderType
 from ptrade_order_tool.ui.digit_input import DigitInput
@@ -34,15 +34,16 @@ class OrderRow(QWidget):
         self.read_only = read_only
         self.setObjectName("order_row")
 
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         self.type_combo = QComboBox()
         self.type_combo.setObjectName("order_type_combo")
         for order_type, label in ORDER_LABELS.items():
             self.type_combo.addItem(label, order_type)
         self.type_combo.setCurrentIndex(list(ORDER_LABELS).index(order.order_type))
+        self.type_combo.setFixedWidth(132)
 
         self.price_input = DigitInput("price")
         self.price_input.setObjectName("order_price_input")
@@ -57,25 +58,39 @@ class OrderRow(QWidget):
 
         self.confirm_button = QPushButton("确认" if not order.confirmed else "已确认")
         self.confirm_button.setObjectName("order_confirm_button")
+        self.confirm_button.setFixedWidth(64)
         self.confirm_button.clicked.connect(lambda: self.confirmRequested.emit(self))
 
         self.delete_button = QPushButton("删除")
         self.delete_button.setObjectName("order_delete_button")
+        self.delete_button.setFixedWidth(58)
         self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self))
 
-        layout.addWidget(self.type_combo)
+        top_row = QWidget()
+        top_layout = QHBoxLayout(top_row)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(6)
+        top_layout.addWidget(self.type_combo)
+        top_layout.addStretch(1)
+        top_layout.addWidget(self.status_label)
+        top_layout.addWidget(self.confirm_button)
+        top_layout.addWidget(self.delete_button)
+        layout.addWidget(top_row)
+
+        value_row = QWidget()
+        value_layout = QHBoxLayout(value_row)
+        value_layout.setContentsMargins(0, 0, 0, 0)
+        value_layout.setSpacing(6)
         self.price_label = QLabel("价格")
         self.price_label.setObjectName("order_field_label")
-        layout.addWidget(self.price_label)
-        layout.addWidget(self.price_input)
+        value_layout.addWidget(self.price_label)
+        value_layout.addWidget(self.price_input)
         self.shares_label = QLabel("股数")
         self.shares_label.setObjectName("order_field_label")
-        layout.addWidget(self.shares_label)
-        layout.addWidget(self.shares_input)
-        layout.addStretch(1)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.confirm_button)
-        layout.addWidget(self.delete_button)
+        value_layout.addWidget(self.shares_label)
+        value_layout.addWidget(self.shares_input)
+        value_layout.addStretch(1)
+        layout.addWidget(value_row)
 
         self._apply_color()
         self.type_combo.currentIndexChanged.connect(self._apply_color)

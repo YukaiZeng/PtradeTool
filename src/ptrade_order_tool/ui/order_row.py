@@ -10,23 +10,25 @@ from ptrade_order_tool.ui.digit_input import DigitInput
 
 
 ORDER_LABELS: dict[OrderType, str] = {
-    "buy_stop": "突破买入 >=",
-    "buy_limit": "回调买入 <=",
+    "buy_stop": "突破买 >=",
+    "buy_limit": "回调买 <=",
     "sell_profit": "止盈 >=",
     "sell_loss": "止损 <=",
 }
 
-ORDER_COLORS: dict[OrderType, str] = {
-    "buy_stop": "#2563eb",
-    "buy_limit": "#0891b2",
-    "sell_profit": "#dc2626",
-    "sell_loss": "#ea580c",
+ORDER_SIDES: dict[OrderType, str] = {
+    "buy_stop": "buy",
+    "buy_limit": "buy",
+    "sell_profit": "sell_profit",
+    "sell_loss": "sell_loss",
 }
 
 
 class OrderRow(QWidget):
     confirmRequested = Signal(object)
     deleteRequested = Signal(object)
+    changed = Signal(object)
+    typeChanged = Signal(object)
 
     def __init__(self, order: OrderDraft, parent: QWidget | None = None, *, read_only: bool = False) -> None:
         super().__init__(parent)
@@ -100,9 +102,10 @@ class OrderRow(QWidget):
 
         self._apply_color()
         self._refresh_amount()
+        self._apply_status_style()
         self.type_combo.currentIndexChanged.connect(self._handle_type_changed)
-        self.price_input.valueChanged.connect(self._refresh_amount)
-        self.shares_input.valueChanged.connect(self._refresh_amount)
+        self.price_input.valueChanged.connect(self._handle_value_changed)
+        self.shares_input.valueChanged.connect(self._handle_value_changed)
         self.set_read_only(read_only)
 
     def selected_order_type(self) -> OrderType:
@@ -116,36 +119,23 @@ class OrderRow(QWidget):
 
     def _apply_color(self) -> None:
         order_type = self.selected_order_type()
-        color = ORDER_COLORS[order_type]
-        self.setStyleSheet(
-            f"""
-            QWidget#order_row {{
-                border-left: 4px solid {color};
-                background: #ffffff;
-            }}
-            QComboBox {{
-                color: {color};
-                font-weight: 600;
-            }}
-            QLabel#order_status_label {{
-                color: {color};
-                font-weight: 600;
-            }}
-            QLabel#order_field_label {{
-                color: #5b6470;
-                font-weight: 600;
-            }}
-            QLabel#order_amount_label {{
-                color: #334155;
-                font-weight: 700;
-                padding-left: 6px;
-            }}
-            """
-        )
+        side = ORDER_SIDES[order_type]
+        self.setProperty("side", side)
+        self.type_combo.setProperty("side", side)
+        self._refresh_dynamic_style(self)
+        self._refresh_dynamic_style(self.type_combo)
 
     def _handle_type_changed(self) -> None:
+        old_order_type = self.order.order_type
         self._apply_color()
         self._refresh_amount()
+        self._mark_changed(emit_signal=False)
+        if self.selected_order_type() != old_order_type:
+            self.typeChanged.emit(self)
+
+    def _handle_value_changed(self) -> None:
+        self._refresh_amount()
+        self._mark_changed()
 
     def _refresh_amount(self) -> None:
         if self.selected_order_type() not in {"buy_stop", "buy_limit"}:
@@ -165,9 +155,47 @@ class OrderRow(QWidget):
         self.confirm_button.setEnabled(not read_only)
         self.delete_button.setEnabled(not read_only)
 
+    def mark_unconfirmed(self) -> None:
+        self.order.confirmed = False
+        self.status_label.setText(self._status_text())
+        self.confirm_button.setText("确认")
+        self._apply_status_style()
+
+    def _mark_changed(self, *, emit_signal: bool = True) -> None:
+        if self.read_only:
+            return
+        if (
+            self.selected_order_type() == self.order.order_type
+            and self.selected_price() == self.order.price
+            and self.selected_shares() == self.order.shares
+        ):
+            return
+        self.order.order_type = self.selected_order_type()
+        self.order.price = self.selected_price()
+        self.order.shares = self.selected_shares()
+        self.mark_unconfirmed()
+        if emit_signal:
+            self.changed.emit(self)
+
     def _status_text(self) -> str:
         if self.order.confirmed:
             return "已确认"
         if self.order.source == "inherited":
             return "继承待确认"
         return "未确认"
+
+    def _apply_status_style(self) -> None:
+        if self.order.confirmed:
+            status = "confirmed"
+        elif self.order.source == "inherited":
+            status = "inherited"
+        else:
+            status = "pending"
+        self.status_label.setProperty("status", status)
+        self.confirm_button.setProperty("status", status)
+        self._refresh_dynamic_style(self.status_label)
+        self._refresh_dynamic_style(self.confirm_button)
+
+    def _refresh_dynamic_style(self, widget: QWidget) -> None:
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)

@@ -19,16 +19,18 @@ from ptrade_order_tool.ui.order_row import ORDER_LABELS, OrderRow
 
 
 GROUP_META = {
-    "buy_stop": ("buy", "突破买入"),
-    "buy_limit": ("buy", "回调买入"),
-    "sell_profit": ("sell_profit", "止盈卖出"),
-    "sell_loss": ("sell_loss", "止损卖出"),
+    "buy_stop": ("buy", "突破买"),
+    "buy_limit": ("buy", "回调买"),
+    "sell_profit": ("sell_profit", "止盈"),
+    "sell_loss": ("sell_loss", "止损"),
 }
 
 
 class StockCard(QFrame):
     confirmRequested = Signal(object)
     deleteRequested = Signal(object)
+    orderChanged = Signal(object)
+    orderTypeChanged = Signal(object)
     addOrderRequested = Signal(object, str)
 
     def __init__(self, stock: StockDraft, parent=None, *, read_only: bool = False) -> None:
@@ -131,9 +133,12 @@ class StockCard(QFrame):
                 row = OrderRow(order, read_only=read_only)
                 row.confirmRequested.connect(self.confirmRequested)
                 row.deleteRequested.connect(self.deleteRequested)
+                row.changed.connect(self.orderChanged)
+                row.typeChanged.connect(self.orderTypeChanged)
                 group_layout.addWidget(row)
-            add_button = QPushButton(f"新增{compact_label}")
+            add_button = QPushButton("新增")
             add_button.setObjectName(f"add_order_{order_type}_{stock.ts_code}")
+            add_button.setProperty("role", "add_order")
             add_button.setEnabled(not read_only)
             add_button.clicked.connect(lambda checked=False, value=order_type: self.addOrderRequested.emit(self.stock, value))
             add_row = QWidget()

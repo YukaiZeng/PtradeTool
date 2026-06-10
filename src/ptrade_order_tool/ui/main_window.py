@@ -4,7 +4,8 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -112,9 +115,17 @@ class MainWindow(QMainWindow):
         self.stock_search_input = QLineEdit()
         self.stock_search_input.setObjectName("stock_search_input")
         self.stock_search_input.setPlaceholderText("输入股票代码、名称、拼音")
+        self.stock_search_input.returnPressed.connect(self._handle_add_stock)
         self.add_stock_button = QPushButton("添加股票")
         self.add_stock_button.setObjectName("add_stock_button")
         self.add_stock_button.clicked.connect(self._handle_add_stock)
+        self.open_export_dir_button = QPushButton("打开导出目录")
+        self.open_export_dir_button.setObjectName("open_export_dir_button")
+        self.open_export_dir_button.clicked.connect(self._handle_open_export_dir)
+        self.open_export_dir_button.hide()
+        self.check_export_button = QPushButton("导出检查")
+        self.check_export_button.setObjectName("check_export_button")
+        self.check_export_button.clicked.connect(self._handle_check_export)
         self.export_button = QPushButton("导出订单 JSON")
         self.export_button.setObjectName("export_button")
         self.export_button.clicked.connect(self._handle_export)
@@ -122,6 +133,10 @@ class MainWindow(QMainWindow):
         self.undo_delete_button.setObjectName("undo_delete_button")
         self.undo_delete_button.hide()
         self.undo_delete_button.clicked.connect(self._handle_undo_delete)
+        self.locate_unconfirmed_button = QPushButton("定位未确认")
+        self.locate_unconfirmed_button.setObjectName("locate_unconfirmed_button")
+        self.locate_unconfirmed_button.hide()
+        self.locate_unconfirmed_button.clicked.connect(self._handle_locate_unconfirmed)
         self.status_label = QLabel("")
         self.status_label.setObjectName("startup_status_label")
 
@@ -145,21 +160,24 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.reimport_button)
         action_layout.addWidget(self.stock_update_button)
         action_layout.addWidget(self.undo_delete_button)
+        action_layout.addWidget(self.locate_unconfirmed_button)
         action_layout.addStretch(1)
         action_layout.addWidget(self.stock_search_input)
         action_layout.addWidget(self.add_stock_button)
+        action_layout.addWidget(self.open_export_dir_button)
+        action_layout.addWidget(self.check_export_button)
         action_layout.addWidget(self.export_button)
         layout.addWidget(self.action_bar)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stock_filter_tabs")
-        self.all_tab = self._make_scroll_tab()
-        self.opening_tab = self._make_scroll_tab()
-        self.holding_tab = self._make_scroll_tab()
-        self.tabs.addTab(self.all_tab[0], "全部")
-        self.tabs.addTab(self.opening_tab[0], "开仓")
-        self.tabs.addTab(self.holding_tab[0], "持仓")
+        self.stock_scroll, self.stock_content, self.stock_layout = self._make_scroll_tab()
+        self.tabs.addTab(QWidget(), "全部")
+        self.tabs.addTab(QWidget(), "开仓")
+        self.tabs.addTab(QWidget(), "持仓")
+        self.tabs.currentChanged.connect(lambda index: self._apply_stock_filter())
         layout.addWidget(self.tabs)
+        layout.addWidget(self.stock_scroll)
 
         if draft:
             self.set_draft(draft)
@@ -197,6 +215,9 @@ class MainWindow(QMainWindow):
     def start_stock_basic_update_if_needed(self) -> None:
         if not self.service:
             return
+        stock_matcher = getattr(self.service, "stock_matcher", None)
+        if stock_matcher is not None and not hasattr(stock_matcher, "sync_from_tushare"):
+            return
         today = datetime.now().strftime("%Y%m%d")
         if self.service.stock_update_button_state(today) not in {"generate", "update_enabled"}:
             return
@@ -221,6 +242,7 @@ class MainWindow(QMainWindow):
             index = self.date_combo.findText(self.draft.manage_date)
             if index >= 0:
                 self.date_combo.setCurrentIndex(index)
+                self.date_combo.setItemData(index, self._date_combo_text(self.draft), Qt.DisplayRole)
         self.date_combo.blockSignals(False)
 
     def set_draft(self, draft: SessionDraft) -> None:
@@ -237,21 +259,18 @@ class MainWindow(QMainWindow):
         self._refresh_draft_summary()
         self.refresh_date_combo()
 
-        for _, content, layout in (self.all_tab, self.opening_tab, self.holding_tab):
-            self._clear_layout(layout)
+        self._clear_layout(self.stock_layout)
 
         for stock in draft.stocks:
-            self.all_tab[2].addWidget(self._make_stock_card(stock))
-            if stock.is_holding:
-                self.holding_tab[2].addWidget(self._make_stock_card(stock))
-            else:
-                self.opening_tab[2].addWidget(self._make_stock_card(stock))
+            self.stock_layout.addWidget(self._make_stock_card(stock))
 
-        for _, _, tab_layout in (self.all_tab, self.opening_tab, self.holding_tab):
-            tab_layout.addStretch(1)
+        self.stock_layout.addStretch(1)
 
         self._refresh_tab_titles()
+        self._apply_stock_filter()
         self._apply_read_only_state()
+        self.open_export_dir_button.setVisible(bool(draft.export_json_path))
+        self._refresh_locate_unconfirmed_button()
 
     def _render_empty_state(self) -> None:
         self.opening_amount_label.hide()
@@ -259,12 +278,11 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(0, "全部")
         self.tabs.setTabText(1, "开仓")
         self.tabs.setTabText(2, "持仓")
-        for _, _, tab_layout in (self.all_tab, self.opening_tab, self.holding_tab):
-            self._clear_layout(tab_layout)
-            empty_label = QLabel("未打开盘后数据。请先设置 PTrade 盘后目录，或点击“手动导入”。")
-            empty_label.setObjectName("empty_state_label")
-            tab_layout.addWidget(empty_label)
-            tab_layout.addStretch(1)
+        self._clear_layout(self.stock_layout)
+        empty_label = QLabel("未打开盘后数据。请先设置 PTrade 盘后目录，或点击“手动导入”。")
+        empty_label.setObjectName("empty_state_label")
+        self.stock_layout.addWidget(empty_label)
+        self.stock_layout.addStretch(1)
 
     def _refresh_draft_summary(self) -> None:
         if not self.draft:
@@ -278,6 +296,19 @@ class MainWindow(QMainWindow):
             "modified_after_export": "导出后修改",
         }.get(self.draft.export_state, self.draft.export_state)
         self.draft_summary_label.setText(f"股票 {total} | 待确认 {unconfirmed} | {state_text}")
+        self._refresh_locate_unconfirmed_button()
+
+    def _refresh_locate_unconfirmed_button(self) -> None:
+        if not hasattr(self, "locate_unconfirmed_button"):
+            return
+        has_unconfirmed = bool(
+            self.draft and any(not order.confirmed for stock in self.draft.stocks for order in stock.orders)
+        )
+        self.locate_unconfirmed_button.setVisible(has_unconfirmed)
+
+    def _date_combo_text(self, draft: SessionDraft) -> str:
+        suffix = " 只读" if draft.read_only else ""
+        return f"{draft.manage_date}{suffix}"
 
     def _opening_order_amount(self, draft: SessionDraft) -> Decimal:
         total = Decimal("0")
@@ -300,6 +331,18 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, f"开仓 {opening}")
         self.tabs.setTabText(2, f"持仓 {holding}")
 
+    def _apply_stock_filter(self) -> None:
+        if not hasattr(self, "stock_content"):
+            return
+        filter_index = self.tabs.currentIndex()
+        for card in self.stock_content.findChildren(StockCard):
+            if filter_index == 1:
+                card.setVisible(not card.stock.is_holding)
+            elif filter_index == 2:
+                card.setVisible(card.stock.is_holding)
+            else:
+                card.setVisible(True)
+
     def _make_scroll_tab(self):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -314,6 +357,8 @@ class MainWindow(QMainWindow):
         card = StockCard(stock, read_only=bool(self.draft and self.draft.read_only))
         card.confirmRequested.connect(self._handle_order_confirm)
         card.deleteRequested.connect(self._handle_order_delete)
+        card.orderChanged.connect(self._handle_order_change)
+        card.orderTypeChanged.connect(self._handle_order_type_change)
         card.addOrderRequested.connect(self._handle_add_order)
         return card
 
@@ -345,6 +390,33 @@ class MainWindow(QMainWindow):
         )
         self.status_label.setText("订单已确认")
         self.set_draft(self.draft)
+
+    def _handle_order_change(self, row: OrderRow) -> None:
+        if self.draft and self.draft.read_only:
+            self.status_label.setText("历史日期只读")
+            return
+        if not self.service or not row.order.id:
+            self.status_label.setText("订单服务未就绪")
+            return
+        self.draft = self.service.update_order_change(
+            row.order.id,
+            price=row.selected_price(),
+            shares=row.selected_shares(),
+            order_type=row.selected_order_type(),
+        )
+        self._refresh_draft_summary()
+        opening_amount = self._opening_order_amount(self.draft)
+        if opening_amount:
+            self.opening_amount_label.setText(f"开仓金额 {self._format_money(opening_amount)}")
+            self.opening_amount_label.show()
+        else:
+            self.opening_amount_label.hide()
+        self.status_label.setText("订单已修改，需重新确认")
+
+    def _handle_order_type_change(self, row: OrderRow) -> None:
+        self._handle_order_change(row)
+        if self.draft:
+            self.set_draft(self.draft)
 
     def _handle_order_delete(self, row: OrderRow) -> None:
         if self.draft and self.draft.read_only:
@@ -386,7 +458,21 @@ class MainWindow(QMainWindow):
             self.status_label.setText("请输入股票代码或名称")
             return
         try:
-            self.draft = self.service.add_manual_stock(self.draft.manage_date, query)
+            candidates = self.service.search_manual_stock_candidates(query, limit=20)
+            if not candidates:
+                raise ValueError(f"未找到股票: {query}")
+            if len(candidates) == 1:
+                stock = candidates[0]
+            else:
+                stock = self._select_stock_candidate(candidates)
+                if not stock:
+                    self.status_label.setText("已取消添加股票")
+                    return
+            self.draft = self.service.add_manual_stock_by_code(
+                self.draft.manage_date,
+                stock["ts_code"],
+                stock_name=stock["name"],
+            )
         except ValueError as exc:
             self.status_label.setText(str(exc))
             return
@@ -394,11 +480,41 @@ class MainWindow(QMainWindow):
         self.stock_search_input.clear()
         self.set_draft(self.draft)
 
+    def _select_stock_candidate(self, candidates: list[dict[str, str]]) -> dict[str, str] | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("选择股票")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        list_widget = QListWidget()
+        list_widget.setObjectName("stock_candidate_list")
+        for stock in candidates:
+            item = QListWidgetItem(f"{stock['ts_code']}  {stock['name']}")
+            item.setData(Qt.UserRole, stock)
+            list_widget.addItem(item)
+        if list_widget.count():
+            list_widget.setCurrentRow(0)
+        layout.addWidget(list_widget)
+        buttons = QHBoxLayout()
+        cancel_button = QPushButton("取消")
+        ok_button = QPushButton("添加")
+        ok_button.setObjectName("stock_candidate_confirm_button")
+        cancel_button.clicked.connect(dialog.reject)
+        ok_button.clicked.connect(dialog.accept)
+        list_widget.itemDoubleClicked.connect(lambda item: dialog.accept())
+        buttons.addStretch(1)
+        buttons.addWidget(cancel_button)
+        buttons.addWidget(ok_button)
+        layout.addLayout(buttons)
+        if dialog.exec() != QDialog.Accepted or not list_widget.currentItem():
+            return None
+        return list_widget.currentItem().data(Qt.UserRole)
+
     def _handle_date_changed(self, manage_date: str) -> None:
+        manage_date = manage_date.split()[0]
         if not manage_date or not self.service:
             return
         self.draft = self.service.load_draft(manage_date)
-        self.status_label.setText("历史日期只读" if self.draft.read_only else "已切换管理日期")
+        self.status_label.setText("历史日期只读，可重新导出" if self.draft.read_only else "已切换管理日期")
         self.set_draft(self.draft)
 
     def _handle_settings(self) -> None:
@@ -512,20 +628,126 @@ class MainWindow(QMainWindow):
         self.status_label.setText("已撤销删除")
         self.set_draft(self.draft)
 
+    def _handle_locate_unconfirmed(self) -> None:
+        if not self.draft:
+            return
+        stock = next(
+            (
+                stock
+                for stock in self.draft.stocks
+                if any(not order.confirmed for order in stock.orders)
+            ),
+            None,
+        )
+        if not stock:
+            self.status_label.setText("没有待确认订单")
+            self._refresh_locate_unconfirmed_button()
+            return
+        self.tabs.setCurrentIndex(0)
+        card = next(
+            (card for card in self.stock_content.findChildren(StockCard) if card.stock.ts_code == stock.ts_code),
+            None,
+        )
+        if card:
+            self.stock_scroll.ensureWidgetVisible(card)
+        self.status_label.setText(f"已定位待确认: {stock.ts_code} {stock.stock_name}")
+
+    def _handle_open_export_dir(self) -> None:
+        if not self.draft or not self.draft.export_json_path:
+            self.status_label.setText("导出路径未配置")
+            return
+        directory = Path(self.draft.export_json_path).parent
+        directory.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+        self.status_label.setText(f"已打开导出目录: {directory}")
+
+    def _handle_check_export(self) -> None:
+        if not self.service or not self.draft:
+            self.status_label.setText("没有可检查的草稿")
+            return
+        validation = self.service.validate_draft_for_export(self.draft.manage_date)
+        pending = self._pending_order_lines(self.draft)
+        self._show_export_check_dialog(pending, validation.blockers, validation.warnings)
+        if validation.blockers:
+            self.status_label.setText(f"导出检查: {len(validation.blockers)} 个阻断项")
+        elif validation.warnings:
+            self.status_label.setText(f"导出检查: {len(validation.warnings)} 个提醒项")
+        else:
+            self.status_label.setText("导出检查通过")
+
+    def _pending_order_lines(self, draft: SessionDraft) -> list[str]:
+        lines = []
+        for stock in draft.stocks:
+            pending_count = sum(1 for order in stock.orders if not order.confirmed)
+            if pending_count:
+                lines.append(f"{stock.ts_code} {stock.stock_name} 待确认 {pending_count} 条")
+        return lines
+
+    def _show_export_check_dialog(self, pending: list[str], blockers: list[str], warnings: list[str]) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("导出检查")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        if blockers:
+            summary_text = f"需要处理 {len(blockers)} 项后才能导出"
+        elif warnings:
+            summary_text = f"有 {len(warnings)} 项建议复核，可继续导出"
+        else:
+            summary_text = "检查通过，可以导出"
+        summary = QLabel(summary_text)
+        summary.setObjectName("export_check_summary")
+        layout.addWidget(summary)
+        layout.addWidget(self._make_export_check_section("待确认", pending, "pending"))
+        layout.addWidget(self._make_export_check_section("阻断项", blockers, "blocker"))
+        layout.addWidget(self._make_export_check_section("提醒项", warnings, "warning"))
+        buttons = QHBoxLayout()
+        locate_button = QPushButton("定位未确认")
+        close_button = QPushButton("关闭")
+        locate_button.setEnabled(bool(pending))
+        locate_button.clicked.connect(lambda: (dialog.accept(), self._handle_locate_unconfirmed()))
+        close_button.clicked.connect(dialog.accept)
+        buttons.addStretch(1)
+        buttons.addWidget(locate_button)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+        dialog.exec()
+
+    def _make_export_check_section(self, title: str, items: list[str], tone: str) -> QWidget:
+        section = QWidget()
+        section.setObjectName("export_check_section")
+        section.setProperty("tone", tone)
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+        title_label = QLabel(f"{title} {len(items)} 项")
+        title_label.setObjectName("export_check_section_title")
+        layout.addWidget(title_label)
+        if items:
+            for item in items:
+                item_label = QLabel(item)
+                item_label.setObjectName("export_check_item")
+                item_label.setWordWrap(True)
+                layout.addWidget(item_label)
+        else:
+            empty_label = QLabel("无")
+            empty_label.setObjectName("export_check_item")
+            layout.addWidget(empty_label)
+        return section
+
     def _handle_export(self) -> None:
         if not self.service or not self.draft:
             self.status_label.setText("没有可导出的草稿")
             return
         validation = self.service.validate_draft_for_export(self.draft.manage_date)
         if validation.blockers:
-            QMessageBox.warning(self, "无法导出", "\n".join(validation.blockers))
+            QMessageBox.warning(self, "无法导出", self._format_export_validation(validation.blockers, []))
             self.status_label.setText(validation.blockers[0])
             return
         if validation.warnings:
             reply = QMessageBox.question(
                 self,
                 "导出提醒",
-                "\n".join(validation.warnings) + "\n\n是否继续导出？",
+                self._format_export_validation([], validation.warnings) + "\n\n是否继续导出？",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -551,9 +773,21 @@ class MainWindow(QMainWindow):
             return
         self._finish_export_success()
 
+    def _format_export_validation(self, blockers: list[str], warnings: list[str]) -> str:
+        lines = []
+        if blockers:
+            lines.append(f"阻断项 {len(blockers)} 个：")
+            lines.extend(f"- {item}" for item in blockers)
+        if warnings:
+            if lines:
+                lines.append("")
+            lines.append(f"提醒项 {len(warnings)} 个：")
+            lines.extend(f"- {item}" for item in warnings)
+        return "\n".join(lines)
+
     def _finish_export_success(self) -> None:
         if not self.service or not self.draft:
             return
         self.draft = self.service.load_draft(self.draft.manage_date)
-        self.status_label.setText("导出完成")
+        self.status_label.setText(f"导出完成: {self.draft.export_json_path}")
         self.set_draft(self.draft)

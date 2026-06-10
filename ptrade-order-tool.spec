@@ -1,22 +1,28 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules
-
 
 block_cipher = None
-
-hiddenimports = collect_submodules("pypinyin")
 
 a = Analysis(
     ["src/ptrade_order_tool/main.py"],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=hiddenimports,
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "IPython",
+        "PIL",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pytest",
+        "setuptools",
+        "tkinter",
+        "unittest",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

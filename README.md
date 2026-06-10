@@ -3,7 +3,7 @@
 Ptrade Order Tool 是一个轻量桌面工具，用于把 PTrade 盘后导出的持仓 JSON 转换成次日自动监控交易所需的订单 JSON。项目包含两部分：
 
 - 桌面工具：导入盘后数据、编辑并确认买单/止盈单/止损单、导出订单 JSON。
-- PTrade 策略脚本：[ptrade_runtime/in-app.py](/Users/mark/SelfFiles/PtradeApp/ptrade_runtime/in-app.py)：在 PTrade 量化环境中读取订单 JSON 并执行自动监控。
+- PTrade 策略脚本：[src/ptrade_order_tool/runtime/in-app.py](/Users/mark/SelfFiles/PtradeTool/src/ptrade_order_tool/runtime/in-app.py)：在 PTrade 量化环境中读取订单 JSON 并执行自动监控。
 
 软件目标是把每日下单计划从手工改 JSON，改成可检查、可提醒、可重复导出的桌面工作流。
 
@@ -30,11 +30,12 @@ Ptrade Order Tool 是一个轻量桌面工具，用于把 PTrade 盘后导出的
 ## 项目结构
 
 ```text
-PtradeApp/
+PtradeTool/
   src/ptrade_order_tool/       桌面工具源码
   tests/                       自动化测试
   tests/fixtures/              盘后 JSON 和订单 JSON 测试样例
-  ptrade_runtime/in-app.py     PTrade 量化环境自动监控脚本
+  src/ptrade_order_tool/runtime/in-app.py
+                                PTrade 量化环境自动监控脚本
   scripts/build_macos.sh       macOS 打包脚本
   scripts/build_windows.ps1    Windows 打包脚本
   ptrade-order-tool.spec       PyInstaller 打包配置
@@ -55,7 +56,7 @@ PtradeApp/
 5. 对每个股票添加或修改订单。
 6. 每条订单确认后再导出。
 7. 将导出的 `order_data/YYYYMMDD.json` 放到 PTrade 研究环境对应目录。
-8. PTrade 中运行 [ptrade_runtime/in-app.py](/Users/mark/SelfFiles/PtradeApp/ptrade_runtime/in-app.py) 进行次日自动监控。
+8. PTrade 中运行 [src/ptrade_order_tool/runtime/in-app.py](/Users/mark/SelfFiles/PtradeTool/src/ptrade_order_tool/runtime/in-app.py) 进行次日自动监控。
 
 ## Tushare Token
 
@@ -71,7 +72,7 @@ Token 可以通过三种方式配置，读取优先级如下：
 
 盘后输入 JSON 以 PTrade 导出格式为准，本项目使用真实样例锁定结构：
 
-- [tests/fixtures/ptrade_20260225.json](/Users/mark/SelfFiles/PtradeApp/tests/fixtures/ptrade_20260225.json)
+- [tests/fixtures/ptrade_20260225.json](/Users/mark/SelfFiles/PtradeTool/tests/fixtures/ptrade_20260225.json)
 
 当前导入链路使用：
 
@@ -157,7 +158,7 @@ Windows PowerShell：
 scripts/build_windows.ps1
 ```
 
-打包产物输出到 `dist/`。当前 macOS `.app` 约 106M，主要体积来自 Python 运行时和 PySide6/Qt。
+打包产物输出到 `dist/`。当前 macOS `.app` 约 103M，主要体积来自 Python 运行时和 PySide6/Qt。
 
 ## 设计边界
 

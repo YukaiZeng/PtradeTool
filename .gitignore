@@ -16,3 +16,4 @@ src/*.egg-info/
 *.log
 
 tmp/
+/data/

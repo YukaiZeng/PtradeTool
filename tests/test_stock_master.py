@@ -1,3 +1,5 @@
+import warnings
+
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.stock_master import (
     MissingTushareToken,
@@ -36,6 +38,17 @@ def test_search_stocks_by_name_pinyin_and_initials(sqlite_conn):
     assert master.search_stocks("石基")[0]["ts_code"] == "002153.SZ"
     assert master.search_stocks("shijixinxi")[0]["ts_code"] == "002153.SZ"
     assert master.search_stocks("sjxx")[0]["ts_code"] == "002153.SZ"
+
+
+def test_upsert_stock_basic_suppresses_pypinyin_deprecation_warning(sqlite_conn):
+    initialize_schema(sqlite_conn)
+    master = StockMaster(sqlite_conn)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        master.upsert_stock_basic(STOCK_ROWS, updated_on="20260609")
+
+    assert not any("codecs.open" in str(warning.message) for warning in caught)
 
 
 def test_search_excludes_delisted_stocks(sqlite_conn):

@@ -103,6 +103,20 @@ def test_add_manual_stock_uses_search_when_available(sqlite_conn, tmp_path):
     assert any(stock.ts_code == "600000.SH" for stock in updated.stocks)
 
 
+def test_add_manual_stock_by_code_accepts_selected_candidate(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+
+    class SearchOnlyMatcher:
+        def resolve_stock(self, query: str):
+            return None
+
+    service.stock_matcher = SearchOnlyMatcher()
+
+    updated = service.add_manual_stock_by_code(draft.manage_date, "600000.SH", stock_name="浦发银行")
+
+    assert any(stock.ts_code == "600000.SH" and stock.stock_name == "浦发银行" for stock in updated.stocks)
+
+
 def test_delete_with_snapshot_and_restore(sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)

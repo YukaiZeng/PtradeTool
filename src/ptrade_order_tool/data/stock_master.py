@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
-
-from pypinyin import Style, lazy_pinyin
 
 from ptrade_order_tool.data.tushare_client import TushareProClient
 
@@ -31,8 +30,7 @@ class StockMaster:
         prepared = []
         for row in rows:
             stock = row if isinstance(row, StockRow) else StockRow(**row)
-            name_pinyin = "".join(lazy_pinyin(stock.name)).lower()
-            name_initials = "".join(lazy_pinyin(stock.name, style=Style.FIRST_LETTER)).lower()
+            name_pinyin, name_initials = _pinyin_fields(stock.name)
             prepared.append(
                 (
                     stock.ts_code,
@@ -193,3 +191,13 @@ def _read_env_value(env_path: Path, key: str) -> str:
             value = value[1:-1]
         return value
     return ""
+
+
+def _pinyin_fields(name: str) -> tuple[str, str]:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"pypinyin\..*")
+        from pypinyin import Style, lazy_pinyin
+
+    name_pinyin = "".join(lazy_pinyin(name)).lower()
+    name_initials = "".join(lazy_pinyin(name, style=Style.FIRST_LETTER)).lower()
+    return name_pinyin, name_initials

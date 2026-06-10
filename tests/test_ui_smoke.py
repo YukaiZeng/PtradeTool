@@ -45,6 +45,21 @@ def test_main_window_renders_account_and_stock_cards(qtbot, sqlite_conn):
     assert window.findChildren(type(window.total_label), "empty_order_label")
 
 
+def test_stock_filter_tabs_reuse_single_card_set(qtbot, sqlite_conn):
+    draft = make_fixture_draft(sqlite_conn)
+    window = MainWindow(draft)
+    qtbot.addWidget(window)
+
+    cards = window.findChildren(StockCard)
+    assert len(cards) == 3
+
+    window.tabs.setCurrentIndex(1)
+    assert all(card.isHidden() for card in cards)
+
+    window.tabs.setCurrentIndex(2)
+    assert all(not card.isHidden() for card in cards)
+
+
 def test_main_window_filters_out_standard_bond(qtbot, sqlite_conn):
     draft = make_fixture_draft(sqlite_conn)
     window = MainWindow(draft)

@@ -1,13 +1,13 @@
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QPushButton
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QWidget
 
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.config import load_config
 from ptrade_order_tool.data.ptrade_importer import parse_ptrade_json
 from ptrade_order_tool.ui import main_window as main_window_module
-from ptrade_order_tool.ui.main_window import MainWindow
+from ptrade_order_tool.ui.main_window import AutoWidthComboBox, MainWindow
 from ptrade_order_tool.ui.order_row import OrderRow
 from ptrade_order_tool.ui.settings_dialog import SettingsDialog
 from ptrade_order_tool.ui.stock_card import StockCard
@@ -70,11 +70,234 @@ def test_date_combo_switches_to_historical_read_only(qtbot, sqlite_conn, tmp_pat
     window = MainWindow(service.load_draft("20260226"), service)
     qtbot.addWidget(window)
 
-    window.date_combo.setCurrentText("20260225")
+    for index in range(window.date_combo.count()):
+        if window.date_combo.itemData(index, Qt.UserRole) == "20260225":
+            window.date_combo.setCurrentIndex(index)
+            break
 
     assert window.draft.manage_date == "20260225"
     assert window.draft.read_only is True
+    assert window.tabs.currentIndex() == 2
     assert "历史日期只读" in window.status_label.text()
+
+
+def test_date_combo_activation_switches_date(qtbot, sqlite_conn, tmp_path):
+    service, _, _ = make_service(sqlite_conn, tmp_path)
+    imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+    imported.manage_date = "20260226"
+    service.drafts.create_draft(
+        imported,
+        expected_trade_date=None,
+        ptrade_json_path="/tmp/20260226.json",
+        export_json_path="/tmp/order_data/20260226.json",
+    )
+    window = MainWindow(service.load_draft("20260226"), service)
+    qtbot.addWidget(window)
+    target_index = next(
+        index
+        for index in range(window.date_combo.count())
+        if window.date_combo.itemData(index, Qt.UserRole) == "20260225"
+    )
+
+    window.date_combo.setCurrentIndex(target_index)
+
+    assert window.draft.manage_date == "20260225"
+
+
+def test_switching_dates_keeps_running_daily_quote_workers_alive(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, _, _ = make_service(sqlite_conn, tmp_path)
+    imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+    imported.manage_date = "20260226"
+    service.drafts.create_draft(
+        imported,
+        expected_trade_date=None,
+        ptrade_json_path="/tmp/20260226.json",
+        export_json_path="/tmp/order_data/20260226.json",
+    )
+    workers = []
+
+    class FakeSignal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+    class RunningDailyWorker:
+        def __init__(self, *args, **kwargs):
+            self.finishedWithRows = FakeSignal()
+            self.finished = FakeSignal()
+            self.interrupted = False
+            workers.append(self)
+
+        def start(self):
+            return None
+
+        def isRunning(self):
+            return True
+
+        def requestInterruption(self):
+            self.interrupted = True
+
+        def quit(self):
+            return None
+
+        def wait(self, _ms):
+            return True
+
+    monkeypatch.setattr(main_window_module, "load_tushare_token", lambda *args, **kwargs: "token")
+    monkeypatch.setattr(main_window_module, "DailyQuotesWorker", RunningDailyWorker)
+
+    window = MainWindow(service.load_draft("20260226"), service, auto_update_stock_basic=False, auto_update_daily_quotes=True)
+    qtbot.addWidget(window)
+    window._start_daily_quotes_update("20260226")
+    window._open_manage_date("20260225")
+    window._start_daily_quotes_update("20260225")
+
+    assert len(workers) == 2
+    assert workers[0].interrupted is True
+    assert workers[0] in window._background_workers
+    assert workers[1] in window._background_workers
+    assert window._daily_quotes_worker is workers[1]
+
+
+def test_daily_quote_update_deduplicates_in_flight_trade_date(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, _, _ = make_service(sqlite_conn, tmp_path)
+    workers = []
+
+    class FakeSignal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+    class RunningDailyWorker:
+        def __init__(self, *args, **kwargs):
+            self.finishedWithRows = FakeSignal()
+            self.finished = FakeSignal()
+            self.manage_date = args[0]
+            workers.append(self)
+
+        def start(self):
+            return None
+
+        def isRunning(self):
+            return True
+
+        def requestInterruption(self):
+            return None
+
+        def quit(self):
+            return None
+
+        def wait(self, _ms):
+            return True
+
+    monkeypatch.setattr(main_window_module, "load_tushare_token", lambda *args, **kwargs: "token")
+    monkeypatch.setattr(main_window_module, "DailyQuotesWorker", RunningDailyWorker)
+
+    window = MainWindow(service.load_draft("20260225"), service, auto_update_stock_basic=False, auto_update_daily_quotes=True)
+    qtbot.addWidget(window)
+    window._start_daily_quotes_update("20260225")
+    window._start_daily_quotes_update("20260225")
+
+    assert len(workers) == 1
+    assert window._daily_quote_workers_by_date == {"20260225": workers[0]}
+
+
+def test_stale_daily_quote_rows_are_cached_without_refreshing_current_ui(qtbot, sqlite_conn, tmp_path):
+    service, _, _ = make_service(sqlite_conn, tmp_path)
+    imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+    imported.manage_date = "20260226"
+    service.drafts.create_draft(
+        imported,
+        expected_trade_date=None,
+        ptrade_json_path="/tmp/20260226.json",
+        export_json_path="/tmp/order_data/20260226.json",
+    )
+    window = MainWindow(service.load_draft("20260226"), service, auto_update_stock_basic=False, auto_update_daily_quotes=False)
+    qtbot.addWidget(window)
+    rows = [
+        {
+            "ts_code": "002153.SZ",
+            "trade_date": "20260225",
+            "open": 10,
+            "high": 11,
+            "low": 9,
+            "close": 10.5,
+            "pre_close": 10,
+            "change": 0.5,
+            "pct_chg": 5,
+            "vol": 10000,
+            "amount": 200000,
+        }
+    ]
+
+    window._handle_daily_quote_rows_loaded("20260225", rows)
+
+    assert service.cached_daily_quotes("20260225", ts_codes=["002153.SZ"])["002153.SZ"].close == Decimal("10.5")
+    assert window.draft.manage_date == "20260226"
+    assert all(card.findChild(QWidget, "stock_daily_quote").isHidden() for card in window.findChildren(StockCard))
+
+
+def test_rapid_date_switching_keeps_state_and_worker_lifecycle_stable(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, _, _ = make_service(sqlite_conn, tmp_path)
+    for manage_date in ("20260226", "20260227", "20260228"):
+        imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+        imported.manage_date = manage_date
+        service.drafts.create_draft(
+            imported,
+            expected_trade_date=None,
+            ptrade_json_path=f"/tmp/{manage_date}.json",
+            export_json_path=f"/tmp/order_data/{manage_date}.json",
+        )
+    workers = []
+
+    class FakeSignal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+    class RunningDailyWorker:
+        def __init__(self, *args, **kwargs):
+            self.finishedWithRows = FakeSignal()
+            self.finished = FakeSignal()
+            self.interrupted = False
+            self.manage_date = args[0]
+            workers.append(self)
+
+        def start(self):
+            return None
+
+        def isRunning(self):
+            return True
+
+        def requestInterruption(self):
+            self.interrupted = True
+
+        def quit(self):
+            return None
+
+        def wait(self, _ms):
+            return True
+
+    monkeypatch.setattr(main_window_module, "load_tushare_token", lambda *args, **kwargs: "token")
+    monkeypatch.setattr(main_window_module, "DailyQuotesWorker", RunningDailyWorker)
+
+    window = MainWindow(service.load_draft("20260228"), service, auto_update_stock_basic=False, auto_update_daily_quotes=True)
+    qtbot.addWidget(window)
+    for manage_date in ("20260227", "20260226", "20260225", "20260228", "20260225"):
+        window._open_manage_date(manage_date)
+        window._start_daily_quotes_update(manage_date)
+
+    assert window.draft.manage_date == "20260225"
+    assert window.tabs.currentIndex() == 2
+    assert all(worker in window._background_workers for worker in workers)
+    assert all(worker.interrupted for worker in workers[:-1])
+    assert window._daily_quotes_worker is workers[-1]
 
 
 def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path):
@@ -99,7 +322,75 @@ def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path
     assert window.reimport_button.isEnabled() is False
     assert all(not row.confirm_button.isEnabled() for row in rows)
     assert all(not row.delete_button.isEnabled() for row in rows)
+    assert all(button.text() == "+" for button in add_buttons)
     assert all(not button.isEnabled() for button in add_buttons)
+
+
+def test_delete_history_action_removes_selected_date(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, _, _ = make_service(sqlite_conn, tmp_path)
+    imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+    imported.manage_date = "20260226"
+    service.drafts.create_draft(
+        imported,
+        expected_trade_date=None,
+        ptrade_json_path="/tmp/20260226.json",
+        export_json_path="/tmp/order_data/20260226.json",
+    )
+    window = MainWindow(service.load_draft("20260226"), service, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_select_history_date_for_delete", lambda dates: "20260225")
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+
+    window.delete_history_action.trigger()
+
+    assert service.drafts.list_manage_dates() == ["20260226"]
+    assert "20260225" in [window.date_combo.itemData(index, Qt.UserRole) for index in range(window.date_combo.count())]
+    assert "已删除历史数据: 20260225" in window.status_label.text()
+
+    for index in range(window.date_combo.count()):
+        if window.date_combo.itemData(index, Qt.UserRole) == "20260225":
+            window.date_combo.setCurrentIndex(index)
+            break
+
+    assert window.draft.manage_date == "20260225"
+    assert window.draft.export_state == "empty"
+    assert window.tabs.tabText(0) == "全部 0"
+    assert "无数据" in window.draft_summary_label.text()
+    assert service.drafts.list_manage_dates() == ["20260226"]
+
+
+def test_delete_history_action_clears_current_date_without_switching(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_select_history_date_for_delete", lambda dates: "20260225")
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+
+    window.delete_history_action.trigger()
+
+    assert service.drafts.list_manage_dates() == []
+    assert "20260225" in [window.date_combo.itemData(index, Qt.UserRole) for index in range(window.date_combo.count())]
+    assert window.draft.manage_date == "20260225"
+    assert window.draft.export_state == "empty"
+    assert window.tabs.tabText(0) == "全部 0"
+    assert "无数据" in window.draft_summary_label.text()
+
+
+def test_delete_history_dialog_uses_project_combo_style(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    captured = {}
+
+    def fake_exec(dialog):
+        captured["combo"] = dialog.findChild(AutoWidthComboBox, "delete_history_date_combo")
+        return main_window_module.QDialog.Rejected
+
+    monkeypatch.setattr(main_window_module.QDialog, "exec", fake_exec)
+
+    assert window._select_history_date_for_delete(["20260225"]) is None
+    assert isinstance(captured["combo"], AutoWidthComboBox)
+    assert captured["combo"].itemText(0) == "20260225 周三"
 
 
 def test_settings_button_saves_config_and_tushare_token(qtbot, sqlite_conn, tmp_path, monkeypatch):

@@ -10,19 +10,27 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QWidget
 class DigitButton(QPushButton):
     digitChanged = Signal(int, str)
 
-    def __init__(self, index: int, digit: str, parent: QWidget | None = None) -> None:
+    def __init__(self, index: int, digit: str, parent: QWidget | None = None, *, editable: bool = True) -> None:
         super().__init__(digit, parent)
         self.index = index
+        self.editable = editable
         self.setObjectName("digit_button")
         self.setFixedSize(26, 30)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
+        self.setEnabled(editable)
 
     def set_digit(self, digit: str) -> None:
         self.setText(digit)
 
     def mousePressEvent(self, event):  # noqa: N802
+        if not self.editable:
+            event.ignore()
+            return
+        parent = self.parent()
         if event.button() == Qt.LeftButton:
+            if hasattr(parent, "set_cursor_index"):
+                parent.set_cursor_index(self.index)
             menu = QMenu(self)
             for digit in "0123456789":
                 action = QAction(digit, menu)
@@ -30,13 +38,13 @@ class DigitButton(QPushButton):
                 menu.addAction(action)
             menu.exec(self.mapToGlobal(event.pos()))
             return
+        if event.button() == Qt.RightButton and hasattr(parent, "show_width_menu"):
+            parent.show_width_menu(self.mapToGlobal(event.pos()))
+            return
         super().mousePressEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):  # noqa: N802
-        current = int(self.text())
-        delta = 1 if event.angleDelta().y() > 0 else -1
-        self.digitChanged.emit(self.index, str((current + delta) % 10))
-        event.accept()
+        event.ignore()
 
 
 class DigitInput(QWidget):
@@ -47,11 +55,12 @@ class DigitInput(QWidget):
         if kind not in {"price", "shares"}:
             raise ValueError("kind must be 'price' or 'shares'")
         self.kind = kind
-        self.default_integer_digits = 4
+        self.default_integer_digits = 3 if kind == "price" else 4
         self.fraction_digits = 2 if kind == "price" else 0
         self._integer_digits = ["0"] * self.default_integer_digits
         self._fraction_digits = ["0"] * self.fraction_digits
         self._cursor = 0
+        self._cursor_at_end = False
         self._buttons: list[DigitButton] = []
 
         self.setFocusPolicy(Qt.StrongFocus)
@@ -79,18 +88,22 @@ class DigitInput(QWidget):
             self._integer_digits = list(integer.zfill(len(self._integer_digits)))
             self._fraction_digits = list(fraction)
         else:
-            integer = str(int(value))
+            integer = str((int(value) // 100) * 100)
             self._ensure_integer_width(len(integer))
             self._integer_digits = list(integer.zfill(len(self._integer_digits)))
         self._cursor = 0
+        self._cursor_at_end = False
         self._refresh()
+        self._update_cursor_style()
         self._update_fixed_width()
         self.valueChanged.emit()
 
     def add_high_digit(self) -> None:
         self._integer_digits.insert(0, "0")
         self._cursor = 0
+        self._cursor_at_end = False
         self._rebuild()
+        self._update_cursor_style()
         self._update_fixed_width()
         self.valueChanged.emit()
 
@@ -99,9 +112,25 @@ class DigitInput(QWidget):
             return
         self._integer_digits.pop(0)
         self._cursor = 0
+        self._cursor_at_end = False
         self._rebuild()
+        self._update_cursor_style()
         self._update_fixed_width()
         self.valueChanged.emit()
+
+    def can_remove_high_digit(self) -> bool:
+        return len(self._integer_digits) > self.default_integer_digits
+
+    def show_width_menu(self, global_pos) -> None:
+        menu = QMenu(self)
+        add_action = QAction("增加最高位", menu)
+        add_action.triggered.connect(self.add_high_digit)
+        menu.addAction(add_action)
+        remove_action = QAction("删除最高位", menu)
+        remove_action.setEnabled(self.can_remove_high_digit())
+        remove_action.triggered.connect(self.remove_high_digit)
+        menu.addAction(remove_action)
+        menu.exec(global_pos)
 
     def set_digit(self, index: int, digit: str) -> None:
         if digit not in "0123456789":
@@ -115,7 +144,13 @@ class DigitInput(QWidget):
         else:
             self._fraction_digits[local_index] = digit
         self._refresh()
+        self._update_cursor_style()
         self.valueChanged.emit()
+
+    def set_cursor_index(self, index: int) -> None:
+        self._cursor = max(0, min(index, len(self._editable_digits()) - 1))
+        self._cursor_at_end = False
+        self._update_cursor_style()
 
     def is_valid(self) -> bool:
         value = self.value()
@@ -126,12 +161,28 @@ class DigitInput(QWidget):
     def keyPressEvent(self, event: QKeyEvent):  # noqa: N802
         text = event.text()
         if text and text in "0123456789":
+            editable_count = len(self._editable_digits())
+            if self._cursor_at_end:
+                event.accept()
+                return
             self.set_digit(self._cursor, text)
-            self._cursor = min(self._cursor + 1, len(self._editable_digits()) - 1)
+            if self._cursor < editable_count - 1:
+                self.set_cursor_index(self._cursor + 1)
+            else:
+                self._cursor_at_end = True
+                self._update_cursor_style()
             event.accept()
             return
-        if event.key() == Qt.Key_Backspace:
-            self._cursor = max(0, self._cursor - 1)
+        if event.key() == Qt.Key_Left:
+            self.set_cursor_index(self._cursor - 1)
+            event.accept()
+            return
+        if event.key() == Qt.Key_Right:
+            self.set_cursor_index(self._cursor + 1)
+            event.accept()
+            return
+        if event.key() in {Qt.Key_Backspace, Qt.Key_Delete}:
+            self._cursor_at_end = False
             self.set_digit(self._cursor, "0")
             event.accept()
             return
@@ -142,7 +193,8 @@ class DigitInput(QWidget):
             self._integer_digits.insert(0, "0")
 
     def _editable_digits(self) -> list[tuple[str, int]]:
-        result = [("integer", index) for index in range(len(self._integer_digits))]
+        integer_limit = len(self._integer_digits) - 2 if self.kind == "shares" else len(self._integer_digits)
+        result = [("integer", index) for index in range(max(0, integer_limit))]
         result.extend(("fraction", index) for index in range(len(self._fraction_digits)))
         return result
 
@@ -156,11 +208,13 @@ class DigitInput(QWidget):
         self._buttons = []
         editable_index = 0
         for index, digit in enumerate(self._integer_digits):
-            button = DigitButton(editable_index, digit, self)
-            button.digitChanged.connect(self.set_digit)
+            editable = self.kind != "shares" or index < len(self._integer_digits) - 2
+            button = DigitButton(editable_index if editable else -1, digit, self, editable=editable)
+            if editable:
+                button.digitChanged.connect(self.set_digit)
+                editable_index += 1
             self._buttons.append(button)
             self._layout.addWidget(button)
-            editable_index += 1
 
         if self.kind == "price":
             dot_label = QLabel(".")
@@ -176,11 +230,18 @@ class DigitInput(QWidget):
                 editable_index += 1
 
         self._update_fixed_width()
+        self._update_cursor_style()
 
     def _refresh(self) -> None:
         digits = self._integer_digits + self._fraction_digits
         for button, digit in zip(self._buttons, digits):
             button.set_digit(digit)
+
+    def _update_cursor_style(self) -> None:
+        for button in self._buttons:
+            button.setProperty("digitCursor", button.editable and button.index == self._cursor)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _update_fixed_width(self) -> None:
         digit_count = len(self._integer_digits) + len(self._fraction_digits)

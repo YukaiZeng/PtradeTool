@@ -18,4 +18,5 @@ def test_initialize_schema_creates_expected_tables(sqlite_conn):
         "holdings",
         "draft_stocks",
         "orders",
+        "daily_quotes",
     } <= names

@@ -79,7 +79,7 @@ class DraftStore:
         return self.load_draft(imported.manage_date)
 
     def delete_draft(self, manage_date: str) -> None:
-        for table in ("orders", "holdings", "fund_snapshots", "sessions"):
+        for table in ("orders", "holdings", "draft_stocks", "fund_snapshots", "sessions"):
             self.conn.execute(f"delete from {table} where manage_date = ?", (manage_date,))
         self.conn.commit()
 
@@ -254,7 +254,42 @@ class DraftStore:
         self.conn.commit()
         return snapshot
 
+    def delete_stock(self, manage_date: str, ts_code: str) -> dict[str, Any]:
+        holding_row = self.conn.execute(
+            "select * from holdings where manage_date = ? and ts_code = ?",
+            (manage_date, ts_code),
+        ).fetchone()
+        draft_stock_row = self.conn.execute(
+            "select * from draft_stocks where manage_date = ? and ts_code = ?",
+            (manage_date, ts_code),
+        ).fetchone()
+        order_rows = self.conn.execute(
+            "select * from orders where manage_date = ? and ts_code = ? order by sort_order, id",
+            (manage_date, ts_code),
+        ).fetchall()
+        if not holding_row and not draft_stock_row and not order_rows:
+            raise KeyError(f"Stock not found: {manage_date} {ts_code}")
+        snapshot = {
+            "kind": "stock",
+            "manage_date": manage_date,
+            "ts_code": ts_code,
+            "holding": dict(holding_row) if holding_row else None,
+            "draft_stock": dict(draft_stock_row) if draft_stock_row else None,
+            "orders": [dict(row) for row in order_rows],
+        }
+        for table in ("orders", "holdings", "draft_stocks"):
+            self.conn.execute(
+                f"delete from {table} where manage_date = ? and ts_code = ?",
+                (manage_date, ts_code),
+            )
+        self._mark_modified(manage_date)
+        self.conn.commit()
+        return snapshot
+
     def restore_deleted_order(self, snapshot: dict[str, Any]) -> int:
+        if snapshot.get("kind") == "stock":
+            self.restore_deleted_stock(snapshot)
+            return 0
         cursor = self.conn.execute(
             """
             insert into orders (
@@ -278,6 +313,70 @@ class DraftStore:
         self._mark_modified(snapshot["manage_date"])
         self.conn.commit()
         return int(cursor.lastrowid)
+
+    def restore_deleted_stock(self, snapshot: dict[str, Any]) -> None:
+        holding = snapshot.get("holding")
+        if holding:
+            self.conn.execute(
+                """
+                insert into holdings (
+                    manage_date, ts_code, stock_code, stock_name, current_amount,
+                    enable_amount, last_price, cost_price, market_value,
+                    profit_ratio, income_balance, is_stock
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    holding["manage_date"],
+                    holding["ts_code"],
+                    holding["stock_code"],
+                    holding["stock_name"],
+                    holding["current_amount"],
+                    holding["enable_amount"],
+                    holding["last_price"],
+                    holding["cost_price"],
+                    holding["market_value"],
+                    holding["profit_ratio"],
+                    holding["income_balance"],
+                    holding["is_stock"],
+                ),
+            )
+        draft_stock = snapshot.get("draft_stock")
+        if draft_stock:
+            self.conn.execute(
+                """
+                insert into draft_stocks (manage_date, ts_code, stock_name, created_at)
+                values (?, ?, ?, ?)
+                """,
+                (
+                    draft_stock["manage_date"],
+                    draft_stock["ts_code"],
+                    draft_stock["stock_name"],
+                    draft_stock["created_at"],
+                ),
+            )
+        for order in snapshot.get("orders", []):
+            self.conn.execute(
+                """
+                insert into orders (
+                    manage_date, ts_code, stock_name, order_type, price, shares,
+                    confirmed, source, warning, sort_order
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    order["manage_date"],
+                    order["ts_code"],
+                    order["stock_name"],
+                    order["order_type"],
+                    order["price"],
+                    order["shares"],
+                    order["confirmed"],
+                    order["source"],
+                    order["warning"],
+                    order["sort_order"],
+                ),
+            )
+        self._mark_modified(snapshot["manage_date"])
+        self.conn.commit()
 
     def is_read_only(self, manage_date: str) -> bool:
         row = self.conn.execute("select max(manage_date) as latest from sessions").fetchone()

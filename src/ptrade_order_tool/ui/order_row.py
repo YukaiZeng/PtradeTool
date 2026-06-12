@@ -10,10 +10,17 @@ from ptrade_order_tool.ui.digit_input import DigitInput
 
 
 ORDER_LABELS: dict[OrderType, str] = {
-    "buy_stop": "突破买 >=",
-    "buy_limit": "回调买 <=",
-    "sell_profit": "止盈 >=",
-    "sell_loss": "止损 <=",
+    "buy_stop": "突破买",
+    "buy_limit": "回调买",
+    "sell_profit": "止盈",
+    "sell_loss": "止损",
+}
+
+ORDER_CONDITIONS: dict[OrderType, str] = {
+    "buy_stop": ">=",
+    "buy_limit": "<=",
+    "sell_profit": ">=",
+    "sell_loss": "<=",
 }
 
 ORDER_SIDES: dict[OrderType, str] = {
@@ -37,8 +44,8 @@ class OrderRow(QWidget):
         self.setObjectName("order_row")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 4, 4, 4)
+        layout.setSpacing(4)
 
         self.type_combo = QComboBox()
         self.type_combo.setObjectName("order_type_combo")
@@ -55,49 +62,41 @@ class OrderRow(QWidget):
         self.shares_input.setObjectName("order_shares_input")
         self.shares_input.set_value(order.shares)
 
-        self.status_label = QLabel(self._status_text())
-        self.status_label.setObjectName("order_status_label")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setMinimumWidth(84)
-        self.status_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.status_indicator = QLabel("")
+        self.status_indicator.setObjectName("order_status_indicator")
+        self.status_indicator.setFixedSize(10, 18)
         self.amount_label = QLabel("")
         self.amount_label.setObjectName("order_amount_label")
 
-        self.confirm_button = QPushButton("确认" if not order.confirmed else "已确认")
+        self.confirm_button = QPushButton("确认")
         self.confirm_button.setObjectName("order_confirm_button")
-        self.confirm_button.setFixedWidth(70)
+        self.confirm_button.setFixedWidth(44)
         self.confirm_button.clicked.connect(lambda: self.confirmRequested.emit(self))
 
         self.delete_button = QPushButton("删除")
         self.delete_button.setObjectName("order_delete_button")
-        self.delete_button.setFixedWidth(64)
+        self.delete_button.setFixedWidth(44)
         self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self))
 
-        top_row = QWidget()
-        top_layout = QHBoxLayout(top_row)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(6)
-        top_layout.addWidget(self.type_combo)
-        top_layout.addStretch(1)
-        top_layout.addWidget(self.status_label)
-        top_layout.addWidget(self.confirm_button)
-        top_layout.addWidget(self.delete_button)
-        layout.addWidget(top_row)
+        self.type_combo.hide()
 
         value_row = QWidget()
-        value_layout = QHBoxLayout(value_row)
-        value_layout.setContentsMargins(0, 0, 0, 0)
-        value_layout.setSpacing(6)
-        self.price_label = QLabel("价格")
+        self.value_layout = QHBoxLayout(value_row)
+        self.value_layout.setContentsMargins(0, 0, 0, 0)
+        self.value_layout.setSpacing(4)
+        self.price_label = QLabel(f"价格 {ORDER_CONDITIONS[order.order_type]}")
         self.price_label.setObjectName("order_field_label")
-        value_layout.addWidget(self.price_label)
-        value_layout.addWidget(self.price_input)
+        self.value_layout.addWidget(self.status_indicator)
+        self.value_layout.addWidget(self.price_label)
+        self.value_layout.addWidget(self.price_input)
         self.shares_label = QLabel("股数")
         self.shares_label.setObjectName("order_field_label")
-        value_layout.addWidget(self.shares_label)
-        value_layout.addWidget(self.shares_input)
-        value_layout.addWidget(self.amount_label)
-        value_layout.addStretch(1)
+        self.value_layout.addWidget(self.shares_label)
+        self.value_layout.addWidget(self.shares_input)
+        self.value_layout.addWidget(self.amount_label)
+        self.value_layout.addStretch(1)
+        self.value_layout.addWidget(self.confirm_button)
+        self.value_layout.addWidget(self.delete_button)
         layout.addWidget(value_row)
 
         self._apply_color()
@@ -122,6 +121,7 @@ class OrderRow(QWidget):
         side = ORDER_SIDES[order_type]
         self.setProperty("side", side)
         self.type_combo.setProperty("side", side)
+        self.price_label.setText(f"价格 {ORDER_CONDITIONS[order_type]}")
         self._refresh_dynamic_style(self)
         self._refresh_dynamic_style(self.type_combo)
 
@@ -138,9 +138,6 @@ class OrderRow(QWidget):
         self._mark_changed()
 
     def _refresh_amount(self) -> None:
-        if self.selected_order_type() not in {"buy_stop", "buy_limit"}:
-            self.amount_label.hide()
-            return
         amount = self.selected_price() * Decimal(self.selected_shares())
         self.amount_label.setText(f"金额 {amount:,.2f}")
         self.amount_label.show()
@@ -157,7 +154,6 @@ class OrderRow(QWidget):
 
     def mark_unconfirmed(self) -> None:
         self.order.confirmed = False
-        self.status_label.setText(self._status_text())
         self.confirm_button.setText("确认")
         self._apply_status_style()
 
@@ -191,9 +187,10 @@ class OrderRow(QWidget):
             status = "inherited"
         else:
             status = "pending"
-        self.status_label.setProperty("status", status)
+        self.status_indicator.setProperty("status", status)
+        self.status_indicator.setToolTip(self._status_text())
         self.confirm_button.setProperty("status", status)
-        self._refresh_dynamic_style(self.status_label)
+        self._refresh_dynamic_style(self.status_indicator)
         self._refresh_dynamic_style(self.confirm_button)
 
     def _refresh_dynamic_style(self, widget: QWidget) -> None:

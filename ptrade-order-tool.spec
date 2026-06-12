@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+
 
 block_cipher = None
 
@@ -59,9 +61,10 @@ coll = COLLECT(
     name="PtradeOrderTool",
 )
 
-app = BUNDLE(
-    coll,
-    name="PtradeOrderTool.app",
-    icon=None,
-    bundle_identifier="com.ptrade.order-tool",
-)
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="PtradeOrderTool.app",
+        icon=None,
+        bundle_identifier="com.ptrade.order-tool",
+    )

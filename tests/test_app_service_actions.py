@@ -117,6 +117,52 @@ def test_add_manual_stock_by_code_accepts_selected_candidate(sqlite_conn, tmp_pa
     assert any(stock.ts_code == "600000.SH" and stock.stock_name == "浦发银行" for stock in updated.stocks)
 
 
+def test_load_daily_quotes_syncs_missing_trade_date(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+
+    class FakeDailyClient:
+        def query(self, api_name, fields="", **kwargs):
+            assert api_name == "daily"
+            assert kwargs == {"trade_date": "20260225"}
+            assert "ts_code" in fields
+            return [
+                {
+                    "ts_code": "002153.SZ",
+                    "trade_date": "20260225",
+                    "open": 10.0,
+                    "high": 12.0,
+                    "low": 9.5,
+                    "close": 11.0,
+                    "pre_close": 10.0,
+                    "change": 1.0,
+                    "pct_chg": 10.0,
+                    "vol": 10000,
+                    "amount": 250000,
+                }
+            ]
+
+    quotes = service.load_daily_quotes(
+        draft.manage_date,
+        token="token",
+        pro_client=FakeDailyClient(),
+        ts_codes=["002153.SZ"],
+    )
+
+    assert quotes["002153.SZ"].close == Decimal("11.0")
+    assert quotes["002153.SZ"].pct_chg == Decimal("10.0")
+    assert quotes["002153.SZ"].amount == Decimal("250000")
+
+
+def test_load_daily_quotes_silently_returns_cache_or_empty_on_sync_failure(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+
+    class FailingClient:
+        def query(self, *args, **kwargs):
+            raise RuntimeError("权限不足")
+
+    assert service.load_daily_quotes(draft.manage_date, token="token", pro_client=FailingClient()) == {}
+
+
 def test_delete_with_snapshot_and_restore(sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
@@ -126,6 +172,17 @@ def test_delete_with_snapshot_and_restore(sqlite_conn, tmp_path):
 
     restored = service.restore_deleted_order(snapshot)
     assert any(order.order_type == "buy_limit" for stock in restored.stocks for order in stock.orders)
+
+
+def test_delete_manage_date_removes_historical_draft(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    service.add_manual_stock_by_code(draft.manage_date, "600000.SH", stock_name="浦发银行")
+
+    service.delete_manage_date(draft.manage_date)
+
+    assert service.drafts.list_manage_dates() == []
+    assert "20260225" in service.list_manage_dates(today="20260226")
+    assert sqlite_conn.execute("select count(*) as count from draft_stocks where manage_date = ?", (draft.manage_date,)).fetchone()["count"] == 0
 
 
 def test_export_draft_writes_file_and_marks_exported(sqlite_conn, tmp_path):

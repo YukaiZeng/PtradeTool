@@ -7,7 +7,7 @@ from typing import Literal
 
 OrderType = Literal["buy_stop", "buy_limit", "sell_profit", "sell_loss"]
 OrderSource = Literal["manual", "inherited"]
-ExportState = Literal["draft", "exported", "modified_after_export"]
+ExportState = Literal["empty", "draft", "exported", "modified_after_export"]
 
 
 @dataclass(slots=True)
@@ -53,6 +53,21 @@ class StockDraft:
     is_holding: bool
     holding: Holding | None = None
     orders: list[OrderDraft] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DailyQuote:
+    ts_code: str
+    trade_date: str
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    pre_close: Decimal
+    change: Decimal
+    pct_chg: Decimal
+    vol: Decimal
+    amount: Decimal
 
 
 @dataclass(slots=True)

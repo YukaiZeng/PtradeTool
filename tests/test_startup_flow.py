@@ -1,5 +1,4 @@
 from decimal import Decimal
-
 from ptrade_order_tool.app_service import AppService, find_latest_ptrade_json
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.db import initialize_schema
@@ -143,14 +142,99 @@ def test_reimport_current_draft_uses_original_ptrade_json(sqlite_conn, tmp_path)
 
 def test_open_latest_on_startup_handles_missing_directory(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
+    calendar = setup_calendar(sqlite_conn)
     service = AppService(
         sqlite_conn,
         AppConfig(ptrade_data_dir=str(tmp_path / "missing"), order_data_dir=str(tmp_path / "order_data")),
         FakeStockMatcher(),
-        setup_calendar(sqlite_conn),
+        calendar,
     )
 
-    result = service.open_latest_on_startup()
+    result = service.open_latest_on_startup(today="20260225")
 
-    assert result.draft is None
-    assert "未找到" in result.message
+    assert result.draft is not None
+    assert result.draft.manage_date == "20260225"
+    assert "空白交易单" in result.message
+
+
+def test_open_latest_on_startup_creates_blank_editable_draft_without_ptrade_json(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    calendar = TradeCalendar(sqlite_conn)
+    calendar.upsert_trade_calendar(
+        [
+            {"cal_date": "20260609", "is_open": 1},
+            {"cal_date": "20260610", "is_open": 1},
+            {"cal_date": "20260611", "is_open": 1},
+        ],
+        updated_on="20260610",
+    )
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir="", order_data_dir=str(tmp_path / "order_data")),
+        FakeStockMatcher(),
+        calendar,
+    )
+
+    result = service.open_latest_on_startup(today="20260610")
+    draft = result.draft
+
+    assert draft is not None
+    assert draft.manage_date == "20260610"
+    assert draft.expected_trade_date == "20260611"
+    assert draft.ptrade_json_path == ""
+    assert draft.stocks == []
+    assert draft.read_only is False
+    assert "空白交易单" in result.message
+
+
+def test_list_manage_dates_uses_calendar_range_when_no_ptrade_json(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    calendar = TradeCalendar(sqlite_conn)
+    calendar.upsert_trade_calendar(
+        [
+            {"cal_date": "20260608", "is_open": 1},
+            {"cal_date": "20260609", "is_open": 1},
+            {"cal_date": "20260610", "is_open": 1},
+        ],
+        updated_on="20260610",
+    )
+    service = AppService(sqlite_conn, AppConfig(), FakeStockMatcher(), calendar)
+
+    assert service.list_manage_dates(today="20260610") == ["20260610", "20260609"]
+
+
+def test_maintain_trade_calendar_starts_from_earliest_ptrade_json(sqlite_conn, tmp_path, monkeypatch):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    ptrade_dir.mkdir()
+    (ptrade_dir / "20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / ".env").write_text("TUSHARE_TOKEN=abc\n", encoding="utf-8")
+    calendar = TradeCalendar(sqlite_conn)
+    captured = {}
+
+    class FakePro:
+        def query(self, api_name, start_date, end_date, fields):
+            captured.update(api_name=api_name, start_date=start_date, end_date=end_date, fields=fields)
+            return [
+                {"cal_date": "20260225", "is_open": 1},
+                {"cal_date": "20260610", "is_open": 1},
+            ]
+
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=""),
+        FakeStockMatcher(),
+        calendar,
+    )
+
+    count = service.maintain_trade_calendar(
+        today="20260610",
+        executable_dir=tmp_path,
+        user_data_dir=tmp_path / "user",
+        pro_client=FakePro(),
+    )
+
+    assert count == 2
+    assert captured["start_date"] == "20260225"
+    assert captured["end_date"] >= "20260610"
+    assert service.list_manage_dates(today="20260610") == ["20260610", "20260225"]

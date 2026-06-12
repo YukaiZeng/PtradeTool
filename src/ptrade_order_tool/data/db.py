@@ -82,6 +82,22 @@ create table if not exists orders (
     warning text not null,
     sort_order integer not null
 );
+
+create table if not exists daily_quotes (
+    trade_date text not null,
+    ts_code text not null,
+    open real not null,
+    high real not null,
+    low real not null,
+    close real not null,
+    pre_close real not null,
+    change real not null,
+    pct_chg real not null,
+    vol real not null,
+    amount real not null,
+    updated_at text not null,
+    primary key (trade_date, ts_code)
+);
 """
 
 

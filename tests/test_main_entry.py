@@ -25,7 +25,15 @@ class FakeApp:
 
 
 class FakeService:
+    def __init__(self):
+        self.calls = []
+
+    def maintain_trade_calendar(self, **kwargs):
+        self.calls.append(("maintain_trade_calendar", kwargs))
+        return 0
+
     def open_latest_on_startup(self):
+        self.calls.append(("open_latest_on_startup", {}))
         return FakeStartup()
 
 
@@ -57,6 +65,7 @@ def test_main_injects_service_into_main_window(monkeypatch):
     exit_code = main_module.main()
 
     assert exit_code == 0
+    assert [name for name, _ in service.calls] == ["maintain_trade_calendar", "open_latest_on_startup"]
     assert FakeWindow.instance.service is service
     assert FakeWindow.instance.message == "ok"
     assert FakeWindow.instance.shown is True

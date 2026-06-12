@@ -8,7 +8,10 @@ def test_create_app_service_initializes_database(tmp_path):
     service = create_app_service(tmp_path)
 
     assert (tmp_path / "app.db").exists()
-    assert service.open_latest_on_startup().draft is None
+    startup = service.open_latest_on_startup()
+    assert startup.draft is not None
+    assert startup.draft.ptrade_json_path == ""
+    assert "空白交易单" in startup.message
 
 
 def test_create_app_service_configures_rotating_log(tmp_path):

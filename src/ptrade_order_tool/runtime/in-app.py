@@ -114,7 +114,7 @@ def before_trading_start(context, data):
         
     # 委托记录重置
     g.entrust_record.clear()
-    
+
     # 读取order数据
     order_date = get_trading_day_by_date(g.current_date, day=-1) # 当前日期前一个交易日
     order_json_path = g.notebook_path + g.order_dir + f"{order_date}.json"

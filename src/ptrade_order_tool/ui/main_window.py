@@ -38,6 +38,7 @@ from ptrade_order_tool.data.order_exporter import validate_export
 from ptrade_order_tool.data.stock_master import MissingTushareToken, load_tushare_token, save_tushare_token
 from ptrade_order_tool.data.tushare_client import TushareProClient
 from ptrade_order_tool.models import DailyQuote, SessionDraft
+from ptrade_order_tool.ui.digit_input import DigitInput
 from ptrade_order_tool.ui.order_row import OrderRow
 from ptrade_order_tool.ui.settings_dialog import SettingsDialog
 from ptrade_order_tool.ui.stock_card import StockCard
@@ -257,6 +258,7 @@ class MainWindow(QMainWindow):
         self._selected_stock_candidate: dict[str, str] | None = None
         self._suppress_candidate_popup = False
         self._daily_quotes: dict[str, DailyQuote] = {}
+        self._daily_quotes_date: str | None = None
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -348,7 +350,7 @@ class MainWindow(QMainWindow):
         self.undo_delete_button.clicked.connect(self._handle_undo_delete)
         self.locate_unconfirmed_button = QPushButton("定位")
         self.locate_unconfirmed_button.setObjectName("locate_unconfirmed_button")
-        self.locate_unconfirmed_button.setToolTip("定位第一条未确认订单")
+        self.locate_unconfirmed_button.setToolTip("定位第一条未确认或阻断项订单")
         self.locate_unconfirmed_button.setEnabled(False)
         self.locate_unconfirmed_button.clicked.connect(self._handle_locate_unconfirmed)
         self.status_label = StatusLabel("")
@@ -587,6 +589,9 @@ class MainWindow(QMainWindow):
         self.date_combo.blockSignals(False)
 
     def set_draft(self, draft: SessionDraft, *, default_to_holding: bool = False) -> None:
+        if self._daily_quotes_date != draft.manage_date:
+            self._daily_quotes = {}
+            self._daily_quotes_date = draft.manage_date
         self.draft = draft
         self.total_label.setText(f"账户总额 {self._format_money(draft.fund.portfolio_value)}")
         self.stock_value_label.setText(f"持仓市值 {self._format_money(draft.fund.stock_positions_value)}")
@@ -598,7 +603,6 @@ class MainWindow(QMainWindow):
         self.refresh_date_combo()
 
         self._clear_layout(self.stock_layout)
-        self._daily_quotes = {}
 
         for stock in draft.stocks:
             self.stock_layout.addWidget(self._make_stock_card(stock))
@@ -648,10 +652,7 @@ class MainWindow(QMainWindow):
     def _refresh_locate_unconfirmed_button(self) -> None:
         if not hasattr(self, "locate_unconfirmed_button"):
             return
-        has_unconfirmed = bool(
-            self.draft and any(not order.confirmed for stock in self.draft.stocks for order in stock.orders)
-        )
-        self.locate_unconfirmed_button.setEnabled(has_unconfirmed)
+        self.locate_unconfirmed_button.setEnabled(self._first_attention_stock() is not None)
 
     def _refresh_check_export_button(self) -> None:
         if not hasattr(self, "check_export_button"):
@@ -666,12 +667,12 @@ class MainWindow(QMainWindow):
             if validation.blockers:
                 tone = "blocker"
                 tooltip = f"阻断项 {len(validation.blockers)} 个"
-            elif validation.warnings:
-                tone = "warning"
-                tooltip = f"提醒项 {len(validation.warnings)} 个"
             elif pending:
                 tone = "pending"
                 tooltip = f"待确认项 {len(pending)} 个"
+            elif validation.warnings:
+                tone = "warning"
+                tooltip = f"提醒项 {len(validation.warnings)} 个"
         self.check_export_button.setProperty("tone", tone)
         self.check_export_button.setToolTip(tooltip)
         self._refresh_dynamic_style(self.check_export_button)
@@ -804,6 +805,8 @@ class MainWindow(QMainWindow):
         if not self.service or not draft.stocks or not hasattr(self.service, "cached_daily_quotes"):
             return
         ts_codes = [stock.ts_code for stock in draft.stocks]
+        if self._daily_quotes_date == draft.manage_date and all(ts_code in self._daily_quotes for ts_code in ts_codes):
+            return
         try:
             cached_quotes = self.service.cached_daily_quotes(draft.manage_date, ts_codes=ts_codes)
         except Exception:
@@ -852,9 +855,13 @@ class MainWindow(QMainWindow):
     def _handle_daily_quotes_loaded(self, manage_date: str, quotes: dict[str, DailyQuote]) -> None:
         if not self.draft or self.draft.manage_date != manage_date or not quotes:
             return
-        self._daily_quotes = quotes
+        if self._daily_quotes_date != manage_date:
+            self._daily_quotes = {}
+        self._daily_quotes.update(quotes)
+        self._daily_quotes_date = manage_date
         for card in self.stock_content.findChildren(StockCard):
-            card.set_daily_quote(quotes.get(card.stock.ts_code))
+            if card.stock.ts_code in quotes:
+                card.set_daily_quote(quotes[card.stock.ts_code])
 
     def _handle_daily_quotes_worker_finished(self) -> None:
         worker = self.sender()
@@ -874,6 +881,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):  # noqa: N802
         self._stop_background_workers()
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     def _track_background_worker(self, worker: QThread) -> None:
@@ -902,6 +912,8 @@ class MainWindow(QMainWindow):
             item = layout.takeAt(0)
             widget = item.widget()
             if widget:
+                for digit_input in widget.findChildren(DigitInput):
+                    digit_input.clear_cursor()
                 widget.deleteLater()
 
     def _handle_order_confirm(self, row: OrderRow) -> None:
@@ -1351,16 +1363,9 @@ class MainWindow(QMainWindow):
     def _handle_locate_unconfirmed(self) -> None:
         if not self.draft:
             return
-        stock = next(
-            (
-                stock
-                for stock in self.draft.stocks
-                if any(not order.confirmed for order in stock.orders)
-            ),
-            None,
-        )
+        stock = self._first_attention_stock()
         if not stock:
-            self.status_label.setText("没有待确认订单")
+            self.status_label.setText("没有未确认或阻断项订单")
             self._refresh_locate_unconfirmed_button()
             return
         self.tabs.setCurrentIndex(0)
@@ -1370,7 +1375,19 @@ class MainWindow(QMainWindow):
         )
         if card:
             self.stock_scroll.ensureWidgetVisible(card)
-        self.status_label.setText(f"已定位待确认: {stock.ts_code} {stock.stock_name}")
+        self.status_label.setText(f"已定位需处理: {stock.ts_code} {stock.stock_name}")
+
+    def _first_attention_stock(self):
+        if not self.draft:
+            return None
+        validation = validate_export(self.draft)
+        for stock in self.draft.stocks:
+            if any(not order.confirmed for order in stock.orders):
+                return stock
+            prefix = f"{stock.ts_code} {stock.stock_name}"
+            if any(blocker.startswith(prefix) for blocker in validation.blockers):
+                return stock
+        return None
 
     def _handle_open_export_dir(self) -> None:
         if not self.draft or not self.draft.export_json_path:
@@ -1475,13 +1492,13 @@ class MainWindow(QMainWindow):
         summary = QLabel(summary_text)
         summary.setObjectName("export_check_summary")
         layout.addWidget(summary)
-        layout.addWidget(self._make_export_check_section("待确认", pending, "pending"))
         layout.addWidget(self._make_export_check_section("阻断项", blockers, "blocker"))
+        layout.addWidget(self._make_export_check_section("待确认", pending, "pending"))
         layout.addWidget(self._make_export_check_section("提醒项", warnings, "warning"))
         buttons = QHBoxLayout()
-        locate_button = QPushButton("定位未确认")
+        locate_button = QPushButton("定位")
         close_button = QPushButton("关闭")
-        locate_button.setEnabled(bool(pending))
+        locate_button.setEnabled(self._first_attention_stock() is not None)
         locate_button.clicked.connect(lambda: (dialog.accept(), self._handle_locate_unconfirmed()))
         close_button.clicked.connect(dialog.accept)
         buttons.addStretch(1)

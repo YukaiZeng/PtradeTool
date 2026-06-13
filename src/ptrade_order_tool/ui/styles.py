@@ -115,25 +115,25 @@ QPushButton#check_export_button[tone="blocker"]:hover {
 }
 
 QPushButton#check_export_button[tone="warning"] {
-    background: #fff7ed;
-    border-color: #fdba74;
-    color: #c2410c;
-}
-
-QPushButton#check_export_button[tone="warning"]:hover {
-    background: #ffedd5;
-    border-color: #fb923c;
-}
-
-QPushButton#check_export_button[tone="pending"] {
     background: #eff6ff;
     border-color: #93c5fd;
     color: #1d4ed8;
 }
 
-QPushButton#check_export_button[tone="pending"]:hover {
+QPushButton#check_export_button[tone="warning"]:hover {
     background: #dbeafe;
     border-color: #60a5fa;
+}
+
+QPushButton#check_export_button[tone="pending"] {
+    background: #fff7ed;
+    border-color: #fdba74;
+    color: #c2410c;
+}
+
+QPushButton#check_export_button[tone="pending"]:hover {
+    background: #ffedd5;
+    border-color: #fb923c;
 }
 
 QPushButton#check_export_button[tone="clean"] {
@@ -582,13 +582,13 @@ QWidget#export_check_section[tone="blocker"] {
 }
 
 QWidget#export_check_section[tone="warning"] {
-    background: #fff7ed;
-    border-color: #fed7aa;
+    background: #eff6ff;
+    border-color: #bfdbfe;
 }
 
 QWidget#export_check_section[tone="pending"] {
-    background: #eff6ff;
-    border-color: #bfdbfe;
+    background: #fff7ed;
+    border-color: #fed7aa;
 }
 
 QLabel#export_check_summary {

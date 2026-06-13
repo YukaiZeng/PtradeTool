@@ -41,6 +41,8 @@ class OrderRow(QWidget):
         super().__init__(parent)
         self.order = order
         self.read_only = read_only
+        self._previous_row: OrderRow | None = None
+        self._next_row: OrderRow | None = None
         self.setObjectName("order_row")
 
         layout = QVBoxLayout(self)
@@ -105,6 +107,10 @@ class OrderRow(QWidget):
         self.type_combo.currentIndexChanged.connect(self._handle_type_changed)
         self.price_input.valueChanged.connect(self._handle_value_changed)
         self.shares_input.valueChanged.connect(self._handle_value_changed)
+        self.price_input.boundaryNavigateRequested.connect(self._handle_price_boundary_navigation)
+        self.shares_input.boundaryNavigateRequested.connect(self._handle_shares_boundary_navigation)
+        self.price_input.keyboardAdvancePastEndRequested.connect(self._handle_price_keyboard_advance_past_end)
+        self.shares_input.keyboardAdvancePastEndRequested.connect(self._handle_shares_keyboard_advance_past_end)
         self.set_read_only(read_only)
 
     def selected_order_type(self) -> OrderType:
@@ -115,6 +121,22 @@ class OrderRow(QWidget):
 
     def selected_shares(self) -> int:
         return self.shares_input.value()
+
+    def focus_price_start(self) -> None:
+        self.price_input.move_to_first_digit()
+
+    def focus_price_end(self) -> None:
+        self.price_input.move_to_last_digit()
+
+    def focus_shares_start(self) -> None:
+        self.shares_input.move_to_first_digit()
+
+    def focus_shares_end(self) -> None:
+        self.shares_input.move_to_last_digit()
+
+    def set_adjacent_rows(self, previous_row: OrderRow | None, next_row: OrderRow | None) -> None:
+        self._previous_row = previous_row
+        self._next_row = next_row
 
     def _apply_color(self) -> None:
         order_type = self.selected_order_type()
@@ -136,6 +158,29 @@ class OrderRow(QWidget):
     def _handle_value_changed(self) -> None:
         self._refresh_amount()
         self._mark_changed()
+
+    def _handle_price_boundary_navigation(self, direction: str) -> None:
+        if direction == "left":
+            if self._previous_row:
+                self._previous_row.focus_shares_end()
+            return
+        self.focus_shares_start()
+
+    def _handle_shares_boundary_navigation(self, direction: str) -> None:
+        if direction == "left":
+            self.focus_price_end()
+            return
+        if self._next_row:
+            self._next_row.focus_price_start()
+
+    def _handle_price_keyboard_advance_past_end(self, source) -> None:
+        self.focus_shares_start()
+
+    def _handle_shares_keyboard_advance_past_end(self, source) -> None:
+        if self._next_row:
+            self._next_row.focus_price_start()
+        else:
+            self.shares_input.clear_cursor()
 
     def _refresh_amount(self) -> None:
         amount = self.selected_price() * Decimal(self.selected_shares())

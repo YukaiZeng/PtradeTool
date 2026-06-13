@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QGroupBox, QLabel, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox
 
 from ptrade_order_tool.ui.main_window import MainWindow, StatusLabel
 from ptrade_order_tool.ui.styles import APP_STYLESHEET
@@ -72,8 +72,35 @@ def test_locate_unconfirmed_button_jumps_to_first_pending_order(qtbot, sqlite_co
     qtbot.mouseClick(window.locate_unconfirmed_button, Qt.LeftButton)
 
     assert window.tabs.currentIndex() == 0
-    assert "已定位待确认: 300162.SZ 雷曼光电" in window.status_label.text()
+    assert "已定位需处理: 300162.SZ 雷曼光电" in window.status_label.text()
     assert window.locate_unconfirmed_button.isHidden() is False
+
+
+def test_locate_button_jumps_to_first_blocking_invalid_order(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_limit", Decimal("0"), 1000)
+    service.drafts.confirm_order(order_id)
+    window = MainWindow(service.load_draft("20260225"), service)
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.locate_unconfirmed_button, Qt.LeftButton)
+
+    assert window.tabs.currentIndex() == 0
+    assert "已定位需处理: 300162.SZ 雷曼光电" in window.status_label.text()
+    assert window.locate_unconfirmed_button.isEnabled() is True
+
+
+def test_locate_button_uses_visible_stock_order_for_pending_or_blocking(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    blocker_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("0"), 1000)
+    service.drafts.confirm_order(blocker_id)
+    service.drafts.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_limit", Decimal("8.8"), 1000)
+    window = MainWindow(service.load_draft("20260225"), service)
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.locate_unconfirmed_button, Qt.LeftButton)
+
+    assert "已定位需处理: 002153.SZ 石基信息" in window.status_label.text()
 
 
 def test_locate_unconfirmed_button_is_disabled_without_pending_orders(qtbot, sqlite_conn, tmp_path):
@@ -97,7 +124,7 @@ def test_compact_action_buttons_have_labels_and_tooltips(qtbot, sqlite_conn, tmp
     assert window.undo_delete_button.text() == "撤销"
     assert window.undo_delete_button.toolTip() == "撤销最近一次删除"
     assert window.locate_unconfirmed_button.text() == "定位"
-    assert window.locate_unconfirmed_button.toolTip() == "定位第一条未确认订单"
+    assert window.locate_unconfirmed_button.toolTip() == "定位第一条未确认或阻断项订单"
 
 
 def test_clickable_buttons_use_pointing_hand_cursor(qtbot, sqlite_conn, tmp_path):
@@ -119,6 +146,13 @@ def test_state_buttons_have_explicit_hover_styles():
     assert 'QPushButton#check_export_button[tone="pending"]:hover' in APP_STYLESHEET
     assert 'QPushButton#order_confirm_button[status="pending"]:hover' in APP_STYLESHEET
     assert 'QPushButton#order_confirm_button[status="confirmed"]:hover' in APP_STYLESHEET
+
+
+def test_pending_and_warning_check_colors_are_swapped():
+    assert 'QPushButton#check_export_button[tone="pending"] {\n    background: #fff7ed;' in APP_STYLESHEET
+    assert 'QPushButton#check_export_button[tone="warning"] {\n    background: #eff6ff;' in APP_STYLESHEET
+    assert 'QWidget#export_check_section[tone="pending"] {\n    background: #fff7ed;' in APP_STYLESHEET
+    assert 'QWidget#export_check_section[tone="warning"] {\n    background: #eff6ff;' in APP_STYLESHEET
 
 
 def test_sell_order_groups_use_neutral_body_background():
@@ -574,6 +608,42 @@ def test_check_export_button_reports_pending_and_blockers(qtbot, sqlite_conn, tm
     assert "导出检查: 1 个阻断项" in window.status_label.text()
     assert window.check_export_button.property("tone") == "blocker"
     assert window.export_button.isEnabled() is False
+
+
+def test_check_export_button_uses_blocker_tone_when_pending_orders_block_export(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)
+    window = MainWindow(service.load_draft("20260225"), service)
+    qtbot.addWidget(window)
+
+    assert window.check_export_button.property("tone") == "blocker"
+    assert window.check_export_button.toolTip() == "阻断项 1 个"
+
+
+def test_export_check_dialog_section_order(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    sections = []
+
+    def fake_section(title, items, tone):
+        sections.append((title, tone))
+        return QLabel(title)
+
+    monkeypatch.setattr(window, "_make_export_check_section", fake_section)
+
+    class FakeDialog(QDialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.QDialog", FakeDialog)
+
+    window._show_export_check_dialog(["pending"], ["blocker"], ["warning"])
+
+    assert sections == [("阻断项", "blocker"), ("待确认", "pending"), ("提醒项", "warning")]
 
 
 def test_check_export_button_reports_warnings_without_blockers(qtbot, sqlite_conn, tmp_path, monkeypatch):

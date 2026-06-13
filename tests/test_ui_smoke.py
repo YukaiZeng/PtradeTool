@@ -7,10 +7,12 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton, QWidget
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.draft_store import DraftStore
 from ptrade_order_tool.data.ptrade_importer import parse_ptrade_json
+from ptrade_order_tool.ui.digit_input import DigitInput
 from ptrade_order_tool.models import DailyQuote, OrderDraft, StockDraft
 from ptrade_order_tool.ui.main_window import MainWindow
 from ptrade_order_tool.ui.order_row import OrderRow
 from ptrade_order_tool.ui.stock_card import StockCard
+from tests.test_app_service_actions import make_service
 from tests.test_ptrade_importer import FakeStockMatcher
 
 
@@ -80,6 +82,109 @@ def test_main_window_does_not_block_rendering_on_daily_quote_load(qtbot, sqlite_
     assert window.findChildren(StockCard)
     assert all(card.findChild(QWidget, "stock_daily_quote").isHidden() for card in window.findChildren(StockCard))
     assert calls == []
+
+
+def test_main_window_reuses_loaded_daily_quotes_when_rerendering_draft(qtbot, sqlite_conn):
+    draft = make_fixture_draft(sqlite_conn)
+    quote = DailyQuote(
+        ts_code="002153.SZ",
+        trade_date=draft.manage_date,
+        open=Decimal("10"),
+        high=Decimal("12"),
+        low=Decimal("9"),
+        close=Decimal("11"),
+        pre_close=Decimal("10"),
+        change=Decimal("1"),
+        pct_chg=Decimal("10"),
+        vol=Decimal("10000"),
+        amount=Decimal("250000"),
+    )
+    cached_calls = []
+
+    class QuoteService:
+        def list_manage_dates(self):
+            return [draft.manage_date]
+
+        def stock_update_button_state(self, today):
+            return "updated_disabled"
+
+        def maintain_trade_calendar(self, **kwargs):
+            return 0
+
+        def cached_daily_quotes(self, *args, **kwargs):
+            cached_calls.append((args, kwargs))
+            return {"002153.SZ": quote}
+
+        def has_daily_quote_cache(self, *args, **kwargs):
+            return True
+
+    window = MainWindow(draft, QuoteService(), auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    window._handle_daily_quotes_loaded(draft.manage_date, {"002153.SZ": quote})
+    cached_calls.clear()
+
+    window.set_draft(draft)
+
+    assert cached_calls == []
+    card = next(card for card in window.findChildren(StockCard) if card.stock.ts_code == "002153.SZ")
+    assert card.findChild(QWidget, "stock_daily_quote").isHidden() is False
+
+
+def test_main_window_merges_partial_daily_quote_updates(qtbot, sqlite_conn):
+    draft = make_fixture_draft(sqlite_conn)
+    first_quote = DailyQuote(
+        ts_code="002153.SZ",
+        trade_date=draft.manage_date,
+        open=Decimal("10"),
+        high=Decimal("12"),
+        low=Decimal("9"),
+        close=Decimal("11"),
+        pre_close=Decimal("10"),
+        change=Decimal("1"),
+        pct_chg=Decimal("10"),
+        vol=Decimal("10000"),
+        amount=Decimal("250000"),
+    )
+    second_quote = DailyQuote(
+        ts_code="300162.SZ",
+        trade_date=draft.manage_date,
+        open=Decimal("8"),
+        high=Decimal("9"),
+        low=Decimal("7"),
+        close=Decimal("8.5"),
+        pre_close=Decimal("8"),
+        change=Decimal("0.5"),
+        pct_chg=Decimal("6.25"),
+        vol=Decimal("12000"),
+        amount=Decimal("300000"),
+    )
+    window = MainWindow(draft, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+
+    window._handle_daily_quotes_loaded(draft.manage_date, {"002153.SZ": first_quote})
+    window._handle_daily_quotes_loaded(draft.manage_date, {"300162.SZ": second_quote})
+
+    assert window._daily_quotes["002153.SZ"] is first_quote
+    assert window._daily_quotes["300162.SZ"] is second_quote
+    shiji_card = next(card for card in window.findChildren(StockCard) if card.stock.ts_code == "002153.SZ")
+    leiman_card = next(card for card in window.findChildren(StockCard) if card.stock.ts_code == "300162.SZ")
+    assert shiji_card.findChild(QWidget, "stock_daily_quote").isHidden() is False
+    assert leiman_card.findChild(QWidget, "stock_daily_quote").isHidden() is False
+
+
+def test_main_window_clears_active_digit_cursor_before_rerender(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    window = MainWindow(service.load_draft(draft.manage_date), service, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+
+    row.price_input.set_cursor_index(0)
+    assert DigitInput._active_cursor_input is row.price_input
+
+    window.set_draft(service.load_draft(draft.manage_date))
+
+    assert DigitInput._active_cursor_input is None
 
 
 def test_stock_filter_tabs_reuse_single_card_set(qtbot, sqlite_conn):

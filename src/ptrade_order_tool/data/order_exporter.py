@@ -29,6 +29,7 @@ def validate_export(draft: SessionDraft) -> ExportValidation:
             _validate_holding_totals(stock, confirmed, validation)
         else:
             _validate_opening_totals(stock, confirmed, validation)
+        _validate_profit_loss_prices(stock, confirmed, validation)
 
     return validation
 
@@ -113,9 +114,23 @@ def _validate_opening_totals(
         )
 
 
+def _validate_profit_loss_prices(
+    stock: StockDraft,
+    confirmed: list[OrderDraft],
+    validation: ExportValidation,
+) -> None:
+    profit_orders = [order for order in confirmed if order.order_type == "sell_profit"]
+    loss_orders = [order for order in confirmed if order.order_type == "sell_loss"]
+    for profit_order in profit_orders:
+        for loss_order in loss_orders:
+            if profit_order.price < loss_order.price:
+                validation.warnings.append(
+                    f"{stock.ts_code} {stock.stock_name} 止盈价格 {profit_order.price:.2f} 小于止损价格 {loss_order.price:.2f}"
+                )
+
+
 def _json_price(price: Decimal) -> int | float:
     normalized = price.normalize()
     if normalized == normalized.to_integral_value():
         return int(normalized)
     return float(price)
-

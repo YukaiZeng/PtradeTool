@@ -1,6 +1,8 @@
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.draft_store import DraftStore
 from ptrade_order_tool.data.ptrade_importer import parse_ptrade_json
@@ -36,6 +38,45 @@ def test_create_draft_imports_holdings_and_inherits_only_sell_orders(sqlite_conn
     assert all(order.order_type != "buy_limit" for order in shiji.orders)
 
 
+def test_create_draft_ignores_malformed_previous_order_json(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path.write_text("{broken", encoding="utf-8")
+
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+        previous_order_path=previous_order_path,
+    )
+
+    assert draft.manage_date == "20260225"
+    assert sum(len(stock.orders) for stock in draft.stocks) == 0
+
+
+def test_create_draft_ignores_malformed_previous_order_items(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path.write_text(
+        '{"002153.SZ": {"sell_profit": [{"price": 12.5}, "bad"], "sell_loss": {"price": 9.9}}}',
+        encoding="utf-8",
+    )
+
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+        previous_order_path=previous_order_path,
+    )
+
+    assert draft.manage_date == "20260225"
+    assert sum(len(stock.orders) for stock in draft.stocks) == 0
+
+
 def test_existing_draft_is_not_overwritten(sqlite_conn):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
@@ -60,6 +101,38 @@ def test_existing_draft_is_not_overwritten(sqlite_conn):
 
     shiji = next(stock for stock in second.stocks if stock.ts_code == "002153.SZ")
     assert [order.order_type for order in shiji.orders] == ["buy_limit"]
+
+
+def test_overwrite_draft_rolls_back_when_inherited_order_is_invalid(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    imported = create_imported()
+    original = store.create_draft(
+        imported,
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+        previous_order_path=None,
+    )
+    order_id = store.add_order(original.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path.write_text(
+        '{"002153.SZ": {"sell_profit": [{"price": "bad", "shares": 2800}]}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(Exception):
+        store.create_draft(
+            imported,
+            expected_trade_date="20260226",
+            ptrade_json_path=str(PTRADER_FIXTURE),
+            export_json_path="/tmp/order_data/20260225.json",
+            previous_order_path=previous_order_path,
+            overwrite=True,
+        )
+
+    draft = store.load_draft("20260225")
+    assert any(order.id == order_id for stock in draft.stocks for order in stock.orders)
 
 
 def test_historical_draft_is_read_only_when_newer_date_exists(sqlite_conn):
@@ -111,4 +184,3 @@ def test_order_confirmation_change_delete_and_restore(sqlite_conn):
     restored_id = store.restore_deleted_order(snapshot)
     assert restored_id != order_id
     assert any(order.id == restored_id for stock in store.load_draft("20260225").stocks for order in stock.orders)
-

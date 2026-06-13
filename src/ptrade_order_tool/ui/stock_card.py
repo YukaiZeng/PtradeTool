@@ -267,6 +267,7 @@ class StockCard(QFrame):
             group_header_layout.addStretch(1)
             group_box.set_embedded_header(group_header)
             group_box.set_collapsed_to_header(not orders)
+            order_rows: list[OrderRow] = []
             for order in orders:
                 row = OrderRow(order, read_only=read_only)
                 row.confirmRequested.connect(self.confirmRequested)
@@ -274,6 +275,11 @@ class StockCard(QFrame):
                 row.changed.connect(self.orderChanged)
                 row.typeChanged.connect(self.orderTypeChanged)
                 group_layout.addWidget(row)
+                order_rows.append(row)
+            for index, row in enumerate(order_rows):
+                previous_row = order_rows[index - 1] if index > 0 else None
+                next_row = order_rows[index + 1] if index < len(order_rows) - 1 else None
+                row.set_adjacent_rows(previous_row, next_row)
             row, column = order_positions[order_type]
             self.orders_grid.addWidget(group_box, row, column)
         self.orders_grid.setColumnStretch(0, 1)

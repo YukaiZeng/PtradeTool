@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QAction, QKeyEvent, QWheelEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QWidget
 
 
 class DigitButton(QPushButton):
@@ -31,17 +31,18 @@ class DigitButton(QPushButton):
         if event.button() == Qt.LeftButton:
             if hasattr(parent, "set_cursor_index"):
                 parent.set_cursor_index(self.index)
-            menu = QMenu(self)
-            for digit in "0123456789":
-                action = QAction(digit, menu)
-                action.triggered.connect(lambda checked=False, value=digit: self.digitChanged.emit(self.index, value))
-                menu.addAction(action)
-            menu.exec(self.mapToGlobal(event.pos()))
+            if hasattr(parent, "show_digit_menu"):
+                parent.show_digit_menu()
             return
         if event.button() == Qt.RightButton and hasattr(parent, "show_width_menu"):
             parent.show_width_menu(self.mapToGlobal(event.pos()))
             return
         super().mousePressEvent(event)
+
+    def _digit_menu_pos(self, menu: QMenu):
+        menu_width = menu.sizeHint().width()
+        button_center = self.mapToGlobal(QPoint(self.width() // 2, self.height()))
+        return QPoint(button_center.x() - menu_width // 2, button_center.y())
 
     def wheelEvent(self, event: QWheelEvent):  # noqa: N802
         event.ignore()
@@ -49,6 +50,9 @@ class DigitButton(QPushButton):
 
 class DigitInput(QWidget):
     valueChanged = Signal()
+    boundaryNavigateRequested = Signal(str)
+    keyboardAdvancePastEndRequested = Signal(object)
+    _active_cursor_input: DigitInput | None = None
 
     def __init__(self, kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,7 +64,12 @@ class DigitInput(QWidget):
         self._integer_digits = ["0"] * self.default_integer_digits
         self._fraction_digits = ["0"] * self.fraction_digits
         self._cursor = 0
+        self._cursor_visible = False
         self._cursor_at_end = False
+        self._event_filter_installed = False
+        self._active_menu: QMenu | None = None
+        self._active_menu_actions: list[QAction] = []
+        self._menu_highlight_index = 0
         self._buttons: list[DigitButton] = []
 
         self.setFocusPolicy(Qt.StrongFocus)
@@ -92,6 +101,7 @@ class DigitInput(QWidget):
             self._ensure_integer_width(len(integer))
             self._integer_digits = list(integer.zfill(len(self._integer_digits)))
         self._cursor = 0
+        self._cursor_visible = False
         self._cursor_at_end = False
         self._refresh()
         self._update_cursor_style()
@@ -101,6 +111,7 @@ class DigitInput(QWidget):
     def add_high_digit(self) -> None:
         self._integer_digits.insert(0, "0")
         self._cursor = 0
+        self._cursor_visible = False
         self._cursor_at_end = False
         self._rebuild()
         self._update_cursor_style()
@@ -112,6 +123,7 @@ class DigitInput(QWidget):
             return
         self._integer_digits.pop(0)
         self._cursor = 0
+        self._cursor_visible = False
         self._cursor_at_end = False
         self._rebuild()
         self._update_cursor_style()
@@ -148,9 +160,82 @@ class DigitInput(QWidget):
         self.valueChanged.emit()
 
     def set_cursor_index(self, index: int) -> None:
+        if DigitInput._active_cursor_input and DigitInput._active_cursor_input is not self:
+            DigitInput._active_cursor_input.clear_cursor()
         self._cursor = max(0, min(index, len(self._editable_digits()) - 1))
+        self._cursor_visible = True
+        DigitInput._active_cursor_input = self
         self._cursor_at_end = False
+        self.setFocus(Qt.MouseFocusReason)
+        self._install_cursor_event_filter()
         self._update_cursor_style()
+
+    def clear_cursor(self) -> None:
+        if not self._cursor_visible:
+            return
+        self.hide_digit_menu()
+        self._cursor_visible = False
+        if DigitInput._active_cursor_input is self:
+            DigitInput._active_cursor_input = None
+        self._cursor_at_end = False
+        self._remove_cursor_event_filter()
+        self._update_cursor_style()
+
+    def set_active_menu(self, menu: QMenu | None) -> None:
+        self._active_menu = menu
+
+    def show_digit_menu(self) -> None:
+        if not self._cursor_visible:
+            self.set_cursor_index(self._cursor)
+        self.hide_digit_menu()
+        button = self._button_for_cursor()
+        if button is None:
+            return
+        menu = QMenu(button)
+        actions: list[QAction] = []
+        for digit in "0123456789":
+            action = QAction(digit, menu)
+            action.triggered.connect(lambda checked=False, value=digit: self._apply_menu_digit(value))
+            menu.addAction(action)
+            actions.append(action)
+        self._active_menu_actions = actions
+        self._menu_highlight_index = 0
+        self.set_active_menu(menu)
+        menu.aboutToHide.connect(lambda: self._clear_active_menu(menu))
+        menu.popup(button._digit_menu_pos(menu))
+        menu.setActiveAction(actions[0])
+
+    def hide_digit_menu(self) -> None:
+        if self._active_menu:
+            self._active_menu.hide()
+            self._clear_active_menu(self._active_menu)
+
+    def move_to_first_digit(self) -> None:
+        self.hide_digit_menu()
+        self.set_cursor_index(0)
+
+    def move_to_last_digit(self) -> None:
+        self.hide_digit_menu()
+        self.set_cursor_index(len(self._editable_digits()) - 1)
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if (
+            event.type() == QEvent.KeyPress
+            and self._cursor_visible
+            and self._active_menu
+            and watched is not self
+            and self._handle_cursor_key(event)
+        ):
+            return True
+        if event.type() == QEvent.MouseButtonPress and self._cursor_visible:
+            target = QApplication.widgetAt(event.globalPosition().toPoint())
+            if target is None:
+                self.clear_cursor()
+            elif self._active_menu and (target is self._active_menu or self._active_menu.isAncestorOf(target)):
+                return False
+            elif target is not self and not self.isAncestorOf(target):
+                self.clear_cursor()
+        return super().eventFilter(watched, event)
 
     def is_valid(self) -> bool:
         value = self.value()
@@ -159,34 +244,64 @@ class DigitInput(QWidget):
         return isinstance(value, int) and value > 0 and value % 100 == 0
 
     def keyPressEvent(self, event: QKeyEvent):  # noqa: N802
+        if self._cursor_visible and self._handle_cursor_key(event):
+            return
+        super().keyPressEvent(event)
+
+    def event(self, event):  # noqa: N802
+        if event.type() == QEvent.DeferredDelete:
+            self._cleanup_cursor_state()
+        return super().event(event)
+
+    def _handle_cursor_key(self, event: QKeyEvent) -> bool:
         text = event.text()
         if text and text in "0123456789":
-            editable_count = len(self._editable_digits())
-            if self._cursor_at_end:
-                event.accept()
-                return
-            self.set_digit(self._cursor, text)
-            if self._cursor < editable_count - 1:
-                self.set_cursor_index(self._cursor + 1)
-            else:
-                self._cursor_at_end = True
-                self._update_cursor_style()
+            self.hide_digit_menu()
+            self._apply_keyboard_digit(text)
             event.accept()
-            return
+            return True
         if event.key() == Qt.Key_Left:
-            self.set_cursor_index(self._cursor - 1)
+            self.hide_digit_menu()
+            if self._cursor <= 0:
+                self.boundaryNavigateRequested.emit("left")
+            else:
+                self.set_cursor_index(self._cursor - 1)
             event.accept()
-            return
+            return True
         if event.key() == Qt.Key_Right:
-            self.set_cursor_index(self._cursor + 1)
+            self.hide_digit_menu()
+            if self._cursor >= len(self._editable_digits()) - 1:
+                self.boundaryNavigateRequested.emit("right")
+            else:
+                self.set_cursor_index(self._cursor + 1)
             event.accept()
-            return
+            return True
+        if event.key() == Qt.Key_Down:
+            if self._active_menu and self._active_menu_actions:
+                self._set_menu_highlight(min(self._menu_highlight_index + 1, len(self._active_menu_actions) - 1))
+            else:
+                self.show_digit_menu()
+                self._set_menu_highlight(0)
+            event.accept()
+            return True
+        if event.key() == Qt.Key_Up and self._active_menu and self._active_menu_actions:
+            if self._menu_highlight_index <= 0:
+                self.hide_digit_menu()
+            else:
+                self._set_menu_highlight(self._menu_highlight_index - 1)
+            event.accept()
+            return True
+        if event.key() in {Qt.Key_Return, Qt.Key_Enter} and self._active_menu and self._active_menu_actions:
+            self._apply_menu_digit(self._active_menu_actions[self._menu_highlight_index].text())
+            event.accept()
+            return True
         if event.key() in {Qt.Key_Backspace, Qt.Key_Delete}:
+            self.hide_digit_menu()
             self._cursor_at_end = False
             self.set_digit(self._cursor, "0")
             event.accept()
-            return
-        super().keyPressEvent(event)
+            return True
+        return False
 
     def _ensure_integer_width(self, width: int) -> None:
         while len(self._integer_digits) < max(width, self.default_integer_digits):
@@ -237,14 +352,77 @@ class DigitInput(QWidget):
         for button, digit in zip(self._buttons, digits):
             button.set_digit(digit)
 
+    def _apply_menu_digit(self, digit: str) -> None:
+        self.hide_digit_menu()
+        self.set_digit(self._cursor, digit)
+        self.set_cursor_index(self._cursor)
+
+    def _apply_keyboard_digit(self, digit: str) -> None:
+        editable_count = len(self._editable_digits())
+        if self._cursor_at_end:
+            return
+        self.set_digit(self._cursor, digit)
+        if self._cursor < editable_count - 1:
+            self.set_cursor_index(self._cursor + 1)
+            return
+        self.keyboardAdvancePastEndRequested.emit(self)
+        if DigitInput._active_cursor_input is self:
+            self._finish_keyboard_entry()
+
+    def _finish_keyboard_entry(self) -> None:
+        self.hide_digit_menu()
+        self._cursor_visible = False
+        if DigitInput._active_cursor_input is self:
+            DigitInput._active_cursor_input = None
+        self._cursor_at_end = True
+        self._remove_cursor_event_filter()
+        self._update_cursor_style()
+
+    def _set_menu_highlight(self, index: int) -> None:
+        if not self._active_menu_actions:
+            return
+        self._menu_highlight_index = max(0, min(index, len(self._active_menu_actions) - 1))
+        self._active_menu.setActiveAction(self._active_menu_actions[self._menu_highlight_index])
+
+    def _clear_active_menu(self, menu: QMenu) -> None:
+        if self._active_menu is not menu:
+            return
+        self._active_menu = None
+        self._active_menu_actions = []
+        self._menu_highlight_index = 0
+
+    def _button_for_cursor(self) -> DigitButton | None:
+        for button in self._buttons:
+            if button.editable and button.index == self._cursor:
+                return button
+        return None
+
     def _update_cursor_style(self) -> None:
         for button in self._buttons:
-            button.setProperty("digitCursor", button.editable and button.index == self._cursor)
+            button.setProperty("digitCursor", self._cursor_visible and button.editable and button.index == self._cursor)
             button.style().unpolish(button)
             button.style().polish(button)
+
+    def _install_cursor_event_filter(self) -> None:
+        app = QApplication.instance()
+        if app and not self._event_filter_installed:
+            app.installEventFilter(self)
+            self._event_filter_installed = True
+
+    def _remove_cursor_event_filter(self) -> None:
+        app = QApplication.instance()
+        if app and self._event_filter_installed:
+            app.removeEventFilter(self)
+            self._event_filter_installed = False
 
     def _update_fixed_width(self) -> None:
         digit_count = len(self._integer_digits) + len(self._fraction_digits)
         dot_width = 8 if self.kind == "price" else 0
         width = digit_count * 26 + max(0, digit_count - 1) * 2 + dot_width
         self.setFixedWidth(width)
+
+    def _cleanup_cursor_state(self) -> None:
+        self.hide_digit_menu()
+        self._remove_cursor_event_filter()
+        if DigitInput._active_cursor_input is self:
+            DigitInput._active_cursor_input = None

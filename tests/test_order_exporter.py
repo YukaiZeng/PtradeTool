@@ -43,6 +43,30 @@ def test_export_json_contains_only_clean_order_fields(sqlite_conn):
     }
 
 
+def test_export_json_keeps_prices_numeric_without_string_formatting(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("5"), 1400)
+    store.confirm_order(order_id)
+
+    data = build_order_json(store.load_draft("20260225"))
+
+    assert data["002153.SZ"]["buy_limit"] == [{"price": 5, "shares": 1400}]
+
+
+def test_export_order_json_writes_standard_numeric_price(sqlite_conn, tmp_path):
+    store, draft = make_store_with_draft(sqlite_conn)
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("5"), 1400)
+    store.confirm_order(order_id)
+    output_path = tmp_path / "20260225.json"
+
+    export_order_json(store.load_draft("20260225"), output_path)
+
+    text = output_path.read_text(encoding="utf-8")
+    assert '"price": 5' in text
+    assert '"price": "5' not in text
+    assert json.loads(text)["002153.SZ"]["buy_limit"][0]["price"] == 5
+
+
 def test_unconfirmed_order_blocks_export(sqlite_conn):
     store, draft = make_store_with_draft(sqlite_conn)
     store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
@@ -76,6 +100,19 @@ def test_holding_sell_total_mismatch_warns_not_blocks(sqlite_conn):
 
     assert validation.can_export is True
     assert any("止盈合计 1400 不等于可卖数量 2800" in item for item in validation.warnings)
+
+
+def test_profit_price_below_loss_price_warns_not_blocks(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("10.50"), 2800)
+    loss_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("10.99"), 2800)
+    store.confirm_order(profit_id)
+    store.confirm_order(loss_id)
+
+    validation = validate_export(store.load_draft("20260225"))
+
+    assert validation.can_export is True
+    assert any("止盈价格 10.50 小于止损价格 10.99" in item for item in validation.warnings)
 
 
 def test_opening_sell_total_mismatch_warns_not_blocks(sqlite_conn):

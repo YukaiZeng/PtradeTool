@@ -35,53 +35,59 @@ class DraftStore:
         existing = self._session_exists(imported.manage_date)
         if existing and not overwrite:
             return self.load_draft(imported.manage_date)
-        if existing and overwrite:
-            self.delete_draft(imported.manage_date)
 
         now = datetime.now().isoformat(timespec="seconds")
-        self.conn.execute(
-            """
-            insert into sessions (
-                manage_date, expected_trade_date, ptrade_json_path, export_json_path,
-                export_state, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                imported.manage_date,
-                expected_trade_date,
-                ptrade_json_path,
-                export_json_path,
-                "draft",
-                now,
-                now,
-            ),
-        )
-        self._insert_fund(imported.manage_date, imported.fund)
-        for holding in imported.holdings:
-            self._insert_holding(imported.manage_date, holding)
-
-        inherited_orders = self._load_inherited_sell_orders(previous_order_path)
-        for holding in imported.holdings:
-            for order in inherited_orders.get(holding.ts_code, []):
-                self.add_order(
+        try:
+            if existing and overwrite:
+                self._delete_draft_without_commit(imported.manage_date)
+            self.conn.execute(
+                """
+                insert into sessions (
+                    manage_date, expected_trade_date, ptrade_json_path, export_json_path,
+                    export_state, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
                     imported.manage_date,
-                    holding.ts_code,
-                    holding.stock_name,
-                    order["order_type"],
-                    Decimal(str(order["price"])),
-                    holding.enable_amount,
-                    confirmed=False,
-                    source="inherited",
-                    warning="数量已按当前持仓调整，需确认",
-                )
+                    expected_trade_date,
+                    ptrade_json_path,
+                    export_json_path,
+                    "draft",
+                    now,
+                    now,
+                ),
+            )
+            self._insert_fund(imported.manage_date, imported.fund)
+            for holding in imported.holdings:
+                self._insert_holding(imported.manage_date, holding)
 
-        self.conn.commit()
+            inherited_orders = self._load_inherited_sell_orders(previous_order_path)
+            for holding in imported.holdings:
+                for order in inherited_orders.get(holding.ts_code, []):
+                    self._add_order_without_commit(
+                        imported.manage_date,
+                        holding.ts_code,
+                        holding.stock_name,
+                        order["order_type"],
+                        Decimal(str(order["price"])),
+                        holding.enable_amount,
+                        confirmed=False,
+                        source="inherited",
+                        warning="数量已按当前持仓调整，需确认",
+                    )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
         return self.load_draft(imported.manage_date)
 
     def delete_draft(self, manage_date: str) -> None:
+        self._delete_draft_without_commit(manage_date)
+        self.conn.commit()
+
+    def _delete_draft_without_commit(self, manage_date: str) -> None:
         for table in ("orders", "holdings", "draft_stocks", "fund_snapshots", "sessions"):
             self.conn.execute(f"delete from {table} where manage_date = ?", (manage_date,))
-        self.conn.commit()
 
     def load_draft(self, manage_date: str) -> SessionDraft:
         session_row = self.conn.execute(
@@ -183,6 +189,33 @@ class DraftStore:
         source: str = "manual",
         warning: str = "",
     ) -> int:
+        row_id = self._add_order_without_commit(
+            manage_date,
+            ts_code,
+            stock_name,
+            order_type,
+            price,
+            shares,
+            confirmed=confirmed,
+            source=source,
+            warning=warning,
+        )
+        self.conn.commit()
+        return row_id
+
+    def _add_order_without_commit(
+        self,
+        manage_date: str,
+        ts_code: str,
+        stock_name: str,
+        order_type: OrderType,
+        price: Decimal,
+        shares: int,
+        *,
+        confirmed: bool = False,
+        source: str = "manual",
+        warning: str = "",
+    ) -> int:
         sort_order = self._next_sort_order(manage_date, ts_code, order_type)
         cursor = self.conn.execute(
             """
@@ -205,7 +238,6 @@ class DraftStore:
             ),
         )
         self._mark_modified(manage_date)
-        self.conn.commit()
         return int(cursor.lastrowid)
 
     def add_manual_stock(self, manage_date: str, ts_code: str, stock_name: str) -> None:
@@ -476,13 +508,25 @@ class DraftStore:
     def _load_inherited_sell_orders(self, previous_order_path: Path | None) -> dict[str, list[dict[str, Any]]]:
         if not previous_order_path or not previous_order_path.exists():
             return {}
-        data = json.loads(previous_order_path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(previous_order_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
         inherited: dict[str, list[dict[str, Any]]] = {}
         for ts_code, stock_info in data.items():
             if not isinstance(stock_info, dict):
                 continue
             for order_type in ("sell_profit", "sell_loss"):
-                for order in stock_info.get(order_type, []):
+                orders = stock_info.get(order_type, [])
+                if not isinstance(orders, list):
+                    continue
+                for order in orders:
+                    if not isinstance(order, dict):
+                        continue
+                    if "price" not in order or "shares" not in order:
+                        continue
                     inherited.setdefault(ts_code, []).append(
                         {
                             "order_type": order_type,

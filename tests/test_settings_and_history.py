@@ -54,7 +54,7 @@ def test_service_lists_manage_dates(sqlite_conn, tmp_path):
         export_json_path="/tmp/order_data/20260226.json",
     )
 
-    assert service.list_manage_dates() == ["20260226", "20260225"]
+    assert service.list_manage_dates() == ["20260226", "20260225", "20260224"]
 
 
 def test_date_combo_switches_to_historical_read_only(qtbot, sqlite_conn, tmp_path):

@@ -295,9 +295,53 @@ def test_stock_card_shows_daily_quote_after_type_badge_without_growing_header(qt
     assert price.text() == "10.50"
     assert pct.text() == "+5.00%"
     assert pct.property("tone") == "up"
-    assert amount.text() == "2.5亿"
+    assert amount.text() == "2.50亿"
     assert kline.height() <= quote_widget.height()
     assert quote_widget.height() <= card.type_badge.height() + 4
+
+
+def test_stock_card_formats_holding_value_profit_and_daily_amount(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=True,
+        holding=type(
+            "Holding",
+            (),
+            {
+                "current_amount": 1200,
+                "enable_amount": 1000,
+                "market_value": Decimal("1234567.8"),
+                "cost_price": Decimal("10.25"),
+                "income_balance": Decimal("-2345.67"),
+            },
+        )(),
+        orders=[],
+    )
+    quote = DailyQuote(
+        ts_code="600000.SH",
+        trade_date="20260225",
+        open=Decimal("10.00"),
+        high=Decimal("10.80"),
+        low=Decimal("9.80"),
+        close=Decimal("10.50"),
+        pre_close=Decimal("10.00"),
+        change=Decimal("0.50"),
+        pct_chg=Decimal("5.00"),
+        vol=Decimal("10000"),
+        amount=Decimal("250000"),
+    )
+    card = StockCard(stock, daily_quote=quote)
+    qtbot.addWidget(card)
+
+    metrics = [label.text() for label in card.findChildren(QLabel, "stock_metric_chip")]
+    profit_metric = next(label for label in card.findChildren(QLabel, "stock_metric_chip") if label.text().startswith("盈亏 "))
+
+    assert [item.split(" ", 1)[0] for item in metrics] == ["市值", "持仓", "成本", "盈亏"]
+    assert "市值 1,234,567.80" in metrics
+    assert "盈亏 -2,345.67" in metrics
+    assert profit_metric.property("tone") in {None, ""}
+    assert card.findChild(QLabel, "stock_daily_amount").text() == "2.50亿"
 
 
 def test_stock_card_daily_quote_zero_pct_uses_black_text_and_red_kline(qtbot):
@@ -560,10 +604,12 @@ def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
     qtbot.addWidget(window)
 
     warnings = [label.text() for label in window.findChildren(type(window.total_label), "stock_card_warning")]
+    metrics = [label.text() for label in window.findChildren(type(window.total_label), "stock_metric_chip")]
     statuses = [label.toolTip() for label in window.findChildren(QLabel, "order_status_indicator")]
     pending_badges = [label.text() for label in window.findChildren(type(window.total_label), "pending_order_badge")]
 
-    assert any("止盈合计 1400" in item for item in warnings)
+    assert any("止盈合计 1400，不等于持仓 2800" in item for item in warnings)
+    assert not any(item.startswith("可卖 ") for item in metrics)
     assert "已确认" in statuses
     assert pending_badges == []
     row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)

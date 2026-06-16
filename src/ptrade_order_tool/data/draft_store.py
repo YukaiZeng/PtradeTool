@@ -70,7 +70,7 @@ class DraftStore:
                         holding.stock_name,
                         order["order_type"],
                         Decimal(str(order["price"])),
-                        holding.enable_amount,
+                        holding.current_amount,
                         confirmed=False,
                         source="inherited",
                         warning="数量已按当前持仓调整，需确认",

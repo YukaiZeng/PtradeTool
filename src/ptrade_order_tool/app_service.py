@@ -79,11 +79,7 @@ class AppService:
         session_dates = set(self.drafts.list_manage_dates())
         today = today or self._today()
         latest_trade_date = self.calendar.latest_trade_day_on_or_before(today) or max(session_dates, default=today)
-        earliest_ptrade_date = self._earliest_ptrade_json_date()
-        if earliest_ptrade_date:
-            start_date = earliest_ptrade_date
-        else:
-            start_date = self.calendar.previous_trade_day(latest_trade_date) or latest_trade_date
+        start_date = self._manage_date_range_start(today=today, latest_trade_date=latest_trade_date)
         calendar_dates = set(self.calendar.trade_days_between(start_date, latest_trade_date))
         if not calendar_dates and not session_dates:
             calendar_dates.add(latest_trade_date)
@@ -205,7 +201,7 @@ class AppService:
         pro_client=None,
     ) -> int:
         token = load_tushare_token(executable_dir, user_data_dir)
-        start_date = self._earliest_ptrade_json_date() or self._calendar_lookback_start(today)
+        start_date = self._calendar_sync_start_date(today)
         end_date = f"{int(today[:4]) + 1}1231"
         return self.calendar.sync_range_from_tushare(
             token,
@@ -246,7 +242,7 @@ class AppService:
         return {
             "token": token,
             "today": today,
-            "calendar_start_date": self._earliest_ptrade_json_date() or self._calendar_lookback_start(today),
+            "calendar_start_date": self._calendar_sync_start_date(today),
             "calendar_end_date": f"{int(today[:4]) + 1}1231",
         }
 
@@ -415,6 +411,20 @@ class AppService:
     def _earliest_ptrade_json_date(self) -> str:
         path = find_earliest_ptrade_json(self.config.ptrade_data_dir)
         return path.stem if path else ""
+
+    def _manage_date_range_start(self, *, today: str, latest_trade_date: str) -> str:
+        earliest_ptrade_date = self._earliest_ptrade_json_date()
+        if earliest_ptrade_date:
+            return self.calendar.previous_trade_day(earliest_ptrade_date) or earliest_ptrade_date
+        if self.calendar.is_trade_day(today):
+            return self.calendar.previous_trade_day(today) or today
+        return latest_trade_date
+
+    def _calendar_sync_start_date(self, today: str) -> str:
+        earliest_ptrade_date = self._earliest_ptrade_json_date()
+        if earliest_ptrade_date:
+            return self._calendar_lookback_start(earliest_ptrade_date)
+        return self._calendar_lookback_start(today)
 
     def _calendar_lookback_start(self, today: str) -> str:
         return (datetime.strptime(today, "%Y%m%d") - timedelta(days=45)).strftime("%Y%m%d")

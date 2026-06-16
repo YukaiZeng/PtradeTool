@@ -172,13 +172,12 @@ class StockCard(QFrame):
             metrics_layout.setContentsMargins(0, 0, 0, 0)
             metrics_layout.setSpacing(6)
             for label, value, tone in (
-                ("持仓", holding.current_amount, ""),
-                ("可卖", holding.enable_amount, ""),
                 ("市值", holding.market_value, ""),
+                ("持仓", holding.current_amount, ""),
                 ("成本", holding.cost_price, ""),
-                ("盈亏", holding.income_balance, "negative" if holding.income_balance < 0 else "positive"),
+                ("盈亏", holding.income_balance, ""),
             ):
-                metric = QLabel(f"{label} {value}")
+                metric = QLabel(f"{label} {_format_metric_value(label, value)}")
                 metric.setObjectName("stock_metric_chip")
                 if tone:
                     metric.setProperty("tone", tone)
@@ -324,14 +323,14 @@ class StockCard(QFrame):
     def _warning_texts(self, grouped: dict[str, list[OrderDraft]]) -> list[str]:
         if not self.stock.holding:
             return []
-        enable_amount = self.stock.holding.enable_amount
+        holding_amount = self.stock.holding.current_amount
         profit_total = sum(order.shares for order in grouped.get("sell_profit", []))
         loss_total = sum(order.shares for order in grouped.get("sell_loss", []))
         warnings = []
-        if profit_total and profit_total != enable_amount:
-            warnings.append(f"止盈合计 {profit_total}，不等于可卖 {enable_amount}")
-        if loss_total and loss_total != enable_amount:
-            warnings.append(f"止损合计 {loss_total}，不等于可卖 {enable_amount}")
+        if profit_total and profit_total != holding_amount:
+            warnings.append(f"止盈合计 {profit_total}，不等于持仓 {holding_amount}")
+        if loss_total and loss_total != holding_amount:
+            warnings.append(f"止损合计 {loss_total}，不等于持仓 {holding_amount}")
         return warnings
 
     def _refresh_dynamic_style(self, widget: QWidget) -> None:
@@ -354,4 +353,10 @@ def _format_pct(pct_chg: Decimal) -> str:
 
 def _format_amount_yi(amount: Decimal) -> str:
     yi = amount / Decimal("100000")
-    return f"{yi:.1f}亿"
+    return f"{yi:.2f}亿"
+
+
+def _format_metric_value(label: str, value: object) -> str:
+    if label in {"市值", "盈亏"}:
+        return f"{Decimal(str(value)):,.2f}"
+    return str(value)

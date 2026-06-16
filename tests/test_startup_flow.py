@@ -203,6 +203,27 @@ def test_list_manage_dates_uses_calendar_range_when_no_ptrade_json(sqlite_conn, 
     assert service.list_manage_dates(today="20260610") == ["20260610", "20260609"]
 
 
+def test_list_manage_dates_includes_continuous_trade_days_from_previous_trade_day(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    ptrade_dir.mkdir()
+    (ptrade_dir / "20260616.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    calendar = TradeCalendar(sqlite_conn)
+    calendar.upsert_trade_calendar(
+        [
+            {"cal_date": "20260612", "is_open": 1},
+            {"cal_date": "20260613", "is_open": 0},
+            {"cal_date": "20260614", "is_open": 0},
+            {"cal_date": "20260615", "is_open": 1},
+            {"cal_date": "20260616", "is_open": 1},
+        ],
+        updated_on="20260616",
+    )
+    service = AppService(sqlite_conn, AppConfig(ptrade_data_dir=str(ptrade_dir)), FakeStockMatcher(), calendar)
+
+    assert service.list_manage_dates(today="20260616") == ["20260616", "20260615"]
+
+
 def test_maintain_trade_calendar_starts_from_earliest_ptrade_json(sqlite_conn, tmp_path, monkeypatch):
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"
@@ -216,6 +237,7 @@ def test_maintain_trade_calendar_starts_from_earliest_ptrade_json(sqlite_conn, t
         def query(self, api_name, start_date, end_date, fields):
             captured.update(api_name=api_name, start_date=start_date, end_date=end_date, fields=fields)
             return [
+                {"cal_date": "20260224", "is_open": 1},
                 {"cal_date": "20260225", "is_open": 1},
                 {"cal_date": "20260610", "is_open": 1},
             ]
@@ -234,7 +256,7 @@ def test_maintain_trade_calendar_starts_from_earliest_ptrade_json(sqlite_conn, t
         pro_client=FakePro(),
     )
 
-    assert count == 2
-    assert captured["start_date"] == "20260225"
+    assert count == 3
+    assert captured["start_date"] == "20260111"
     assert captured["end_date"] >= "20260610"
-    assert service.list_manage_dates(today="20260610") == ["20260610", "20260225"]
+    assert service.list_manage_dates(today="20260610") == ["20260610", "20260225", "20260224"]

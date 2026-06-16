@@ -80,16 +80,16 @@ def _validate_holding_totals(
     confirmed: list[OrderDraft],
     validation: ExportValidation,
 ) -> None:
-    enable_amount = stock.holding.enable_amount if stock.holding else 0
+    holding_amount = stock.holding.current_amount if stock.holding else 0
     profit_total = sum(order.shares for order in confirmed if order.order_type == "sell_profit")
     loss_total = sum(order.shares for order in confirmed if order.order_type == "sell_loss")
-    if profit_total != enable_amount:
+    if profit_total != holding_amount:
         validation.warnings.append(
-            f"{stock.ts_code} {stock.stock_name} 止盈合计 {profit_total} 不等于可卖数量 {enable_amount}"
+            f"{stock.ts_code} {stock.stock_name} 止盈合计 {profit_total} 不等于持仓数量 {holding_amount}"
         )
-    if loss_total != enable_amount:
+    if loss_total != holding_amount:
         validation.warnings.append(
-            f"{stock.ts_code} {stock.stock_name} 止损合计 {loss_total} 不等于可卖数量 {enable_amount}"
+            f"{stock.ts_code} {stock.stock_name} 止损合计 {loss_total} 不等于持仓数量 {holding_amount}"
         )
 
 

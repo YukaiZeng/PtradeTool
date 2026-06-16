@@ -186,14 +186,12 @@ QLineEdit, QComboBox {
     color: #172033;
     min-height: 32px;
     padding: 0 8px;
-    font-family: "PingFang SC", "Arial";
 }
 
 QLineEdit#stock_search_input {
     min-height: 32px;
     max-height: 32px;
     padding: 0 8px;
-    font-family: "PingFang SC", "Arial";
 }
 
 QLineEdit#stock_search_input,
@@ -337,13 +335,13 @@ QLabel#stock_metric_chip[tone="positive"] {
 }
 
 QWidget#stock_card_warning_box {
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
     border-radius: 6px;
 }
 
 QLabel#stock_card_warning {
-    color: #c2410c;
+    color: #1d4ed8;
     font-weight: 700;
 }
 
@@ -611,7 +609,20 @@ QLabel#export_check_item {
 
 def apply_app_style(app: QApplication) -> None:
     if isinstance(app, QApplication):
-        families = set(QFontDatabase.families())
-        family = "PingFang SC" if "PingFang SC" in families else "Arial"
-        app.setFont(QFont(family, 13))
+        app.setFont(QFont(_preferred_ui_font_family(QFontDatabase.families()), 13))
     app.setStyleSheet(APP_STYLESHEET)
+
+
+def _preferred_ui_font_family(families: list[str]) -> str:
+    available = set(families)
+    for family in (
+        "PingFang SC",
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "Arial",
+    ):
+        if family in available:
+            return family
+    return families[0] if families else "Arial"

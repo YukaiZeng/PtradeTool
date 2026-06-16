@@ -4,8 +4,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox
 
 from ptrade_order_tool.ui.main_window import MainWindow, StatusLabel
-from ptrade_order_tool.ui.styles import APP_STYLESHEET
 from ptrade_order_tool.ui.order_row import OrderRow
+from ptrade_order_tool.ui.styles import APP_STYLESHEET, _preferred_ui_font_family
 from ptrade_order_tool.ui.stock_card import StockCard
 from tests.test_app_service_actions import make_service
 
@@ -153,6 +153,19 @@ def test_pending_and_warning_check_colors_are_swapped():
     assert 'QPushButton#check_export_button[tone="warning"] {\n    background: #eff6ff;' in APP_STYLESHEET
     assert 'QWidget#export_check_section[tone="pending"] {\n    background: #fff7ed;' in APP_STYLESHEET
     assert 'QWidget#export_check_section[tone="warning"] {\n    background: #eff6ff;' in APP_STYLESHEET
+
+
+def test_stock_card_warning_uses_check_warning_colors():
+    assert 'QWidget#stock_card_warning_box {\n    background: #eff6ff;' in APP_STYLESHEET
+    assert 'border: 1px solid #bfdbfe;' in APP_STYLESHEET
+    assert 'QLabel#stock_card_warning {\n    color: #1d4ed8;' in APP_STYLESHEET
+
+
+def test_preferred_ui_font_family_prioritizes_cjk_friendly_fonts():
+    assert _preferred_ui_font_family(["Microsoft YaHei UI", "Arial"]) == "Microsoft YaHei UI"
+    assert _preferred_ui_font_family(["PingFang SC", "Arial"]) == "PingFang SC"
+    assert _preferred_ui_font_family(["Arial"]) == "Arial"
+    assert "font-family" not in APP_STYLESHEET
 
 
 def test_sell_order_groups_use_neutral_body_background():
@@ -664,7 +677,7 @@ def test_check_export_button_reports_warnings_without_blockers(qtbot, sqlite_con
     pending, blockers, warnings = captured[0]
     assert pending == []
     assert blockers == []
-    assert any("止盈合计 1400 不等于可卖数量" in item for item in warnings)
+    assert any("止盈合计 1400 不等于持仓数量" in item for item in warnings)
     assert "导出检查: " in window.status_label.text()
     assert "个提醒项" in window.status_label.text()
     assert window.check_export_button.property("tone") == "warning"

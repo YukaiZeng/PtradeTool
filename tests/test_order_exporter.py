@@ -91,15 +91,15 @@ def test_invalid_price_and_shares_block_export(sqlite_conn):
 
 def test_holding_sell_total_mismatch_warns_not_blocks(sqlite_conn):
     store, draft = make_store_with_draft(sqlite_conn)
-    profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)
-    loss_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("10.99"), 2800)
+    profit_id = store.add_order(draft.manage_date, "300251.SZ", "光线传媒", "sell_profit", Decimal("12.65"), 100)
+    loss_id = store.add_order(draft.manage_date, "300251.SZ", "光线传媒", "sell_loss", Decimal("10.99"), 200)
     store.confirm_order(profit_id)
     store.confirm_order(loss_id)
 
     validation = validate_export(store.load_draft("20260225"))
 
     assert validation.can_export is True
-    assert any("止盈合计 1400 不等于可卖数量 2800" in item for item in validation.warnings)
+    assert any("止盈合计 100 不等于持仓数量 200" in item for item in validation.warnings)
 
 
 def test_profit_price_below_loss_price_warns_not_blocks(sqlite_conn):

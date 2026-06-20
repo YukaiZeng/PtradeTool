@@ -229,7 +229,7 @@ class DraftStore:
                 ts_code,
                 stock_name,
                 order_type,
-                float(price),
+                _decimal_text(price),
                 int(shares),
                 1 if confirmed else 0,
                 source,
@@ -263,7 +263,7 @@ class DraftStore:
             set price = ?, shares = ?, order_type = ?, confirmed = 0
             where id = ?
             """,
-            (float(price), int(shares), order_type, order_id),
+            (_decimal_text(price), int(shares), order_type, order_id),
         )
         self._mark_modified(row["manage_date"])
         self.conn.commit()
@@ -445,11 +445,11 @@ class DraftStore:
             """,
             (
                 manage_date,
-                float(fund.cash),
-                float(fund.positions_value),
-                float(fund.portfolio_value),
-                float(fund.stock_positions_value),
-                float(fund.calibrated_cash),
+                _decimal_text(fund.cash),
+                _decimal_text(fund.positions_value),
+                _decimal_text(fund.portfolio_value),
+                _decimal_text(fund.stock_positions_value),
+                _decimal_text(fund.calibrated_cash),
             ),
         )
 
@@ -469,11 +469,11 @@ class DraftStore:
                 holding.stock_name,
                 holding.current_amount,
                 holding.enable_amount,
-                float(holding.last_price),
-                float(holding.cost_price),
-                float(holding.market_value),
-                float(holding.profit_ratio),
-                float(holding.income_balance),
+                _decimal_text(holding.last_price),
+                _decimal_text(holding.cost_price),
+                _decimal_text(holding.market_value),
+                _decimal_text(holding.profit_ratio),
+                _decimal_text(holding.income_balance),
                 1 if holding.is_stock else 0,
             ),
         )
@@ -557,3 +557,7 @@ class DraftStore:
             "update sessions set export_state = ?, updated_at = ? where manage_date = ?",
             (export_state, datetime.now().isoformat(timespec="seconds"), manage_date),
         )
+
+
+def _decimal_text(value: Decimal | int | float | str) -> str:
+    return format(Decimal(str(value)), "f")

@@ -58,7 +58,9 @@ class AppService:
         return self._create_or_open_from_path(ptrade_json_path, overwrite=True)
 
     def import_ptrade_json(self, ptrade_json_path: Path) -> SessionDraft:
-        return self._create_or_open_from_path(ptrade_json_path, overwrite=False)
+        imported = parse_ptrade_json(ptrade_json_path, self.stock_matcher)
+        overwrite = self._blank_draft_can_be_replaced(imported.manage_date, raise_on_edited=True)
+        return self._create_or_open_imported(imported, ptrade_json_path, overwrite=overwrite)
 
     def reimport_current_draft(self, manage_date: str) -> SessionDraft:
         draft = self.drafts.load_draft(manage_date)
@@ -343,6 +345,16 @@ class AppService:
 
     def _create_or_open_from_path(self, ptrade_json_path: Path, *, overwrite: bool) -> SessionDraft:
         imported = parse_ptrade_json(ptrade_json_path, self.stock_matcher)
+        overwrite = overwrite or self._blank_draft_can_be_replaced(imported.manage_date, raise_on_edited=False)
+        return self._create_or_open_imported(imported, ptrade_json_path, overwrite=overwrite)
+
+    def _create_or_open_imported(
+        self,
+        imported: ImportedPtradeData,
+        ptrade_json_path: Path,
+        *,
+        overwrite: bool,
+    ) -> SessionDraft:
         self.logger.info("ptrade_imported path=%s manage_date=%s holdings=%s overwrite=%s", ptrade_json_path, imported.manage_date, len(imported.holdings), overwrite)
         previous_day = self.calendar.previous_trade_day(imported.manage_date)
         expected_trade_date = self.calendar.next_trade_day(imported.manage_date)
@@ -360,6 +372,19 @@ class AppService:
             previous_order_path=previous_order_path,
             overwrite=overwrite,
         )
+
+    def _blank_draft_can_be_replaced(self, manage_date: str, *, raise_on_edited: bool) -> bool:
+        try:
+            draft = self.drafts.load_draft(manage_date)
+        except KeyError:
+            return False
+        if draft.ptrade_json_path:
+            return False
+        if draft.stocks:
+            if raise_on_edited:
+                raise ValueError("当前日期已有手动草稿，请先删除历史数据或使用重新导入流程")
+            return False
+        return True
 
     def _create_or_open_blank(self, manage_date: str) -> SessionDraft:
         imported = ImportedPtradeData(manage_date=manage_date, fund=self._empty_fund(), holdings=[])
@@ -387,7 +412,7 @@ class AppService:
             ptrade_json_path="",
             export_json_path=export_json_path,
             export_state=export_state,
-            read_only=False,
+            read_only=self._empty_view_is_read_only(manage_date) if export_state == "empty" else False,
         )
 
     def _empty_fund(self) -> FundSnapshot:
@@ -431,6 +456,16 @@ class AppService:
 
     def _today(self) -> str:
         return datetime.now().strftime("%Y%m%d")
+
+    def _empty_view_is_read_only(self, manage_date: str) -> bool:
+        later_session = self.conn.execute(
+            "select 1 from sessions where manage_date > ? limit 1",
+            (manage_date,),
+        ).fetchone()
+        if later_session:
+            return True
+        latest_calendar_day = self.calendar.latest_trade_day_on_or_before(self._today())
+        return bool(latest_calendar_day and manage_date < latest_calendar_day)
 
 
 def find_latest_ptrade_json(ptrade_data_dir: str) -> Path | None:

@@ -354,9 +354,11 @@ def test_delete_history_action_removes_selected_date(qtbot, sqlite_conn, tmp_pat
 
     assert window.draft.manage_date == "20260225"
     assert window.draft.export_state == "empty"
+    assert window.draft.read_only is True
     assert window.tabs.tabText(0) == "全部 0"
     assert "无数据" in window.draft_summary_label.text()
     assert service.drafts.list_manage_dates() == ["20260226"]
+    assert window.stock_search_input.isEnabled() is False
 
 
 def test_delete_history_action_clears_current_date_without_switching(qtbot, sqlite_conn, tmp_path, monkeypatch):

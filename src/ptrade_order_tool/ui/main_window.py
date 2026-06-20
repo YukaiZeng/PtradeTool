@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptrade_order_tool.app_service import AppService
-from ptrade_order_tool.config import get_user_data_dir, save_config
+from ptrade_order_tool.config import get_executable_dir, get_user_data_dir, save_config
 from ptrade_order_tool.data.daily_quote_store import DAILY_FIELDS
 from ptrade_order_tool.data.order_exporter import validate_export
 from ptrade_order_tool.data.stock_master import MissingTushareToken, load_tushare_token, save_tushare_token
@@ -493,7 +493,12 @@ class MainWindow(QMainWindow):
         self.set_stock_update_state(self.service.stock_update_button_state(today))
 
     def set_stock_update_state(self, state: str) -> None:
-        if state == "generate":
+        if state == "updating":
+            self.stock_update_button.setText("更新中...")
+            self.stock_update_button.setEnabled(False)
+            self.stock_update_action.setText("股票数据更新中...")
+            self.stock_update_action.setEnabled(False)
+        elif state == "generate":
             self.stock_update_button.setText("生成数据")
             self.stock_update_button.setEnabled(True)
             self.stock_update_action.setText("生成股票数据")
@@ -521,7 +526,7 @@ class MainWindow(QMainWindow):
         try:
             count = self.service.maintain_trade_calendar(
                 today=today,
-                executable_dir=Path.cwd(),
+                executable_dir=get_executable_dir(),
                 user_data_dir=get_user_data_dir(),
             )
         except MissingTushareToken:
@@ -534,22 +539,26 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"交易日历已维护: {count} 条")
 
     def start_stock_basic_update_if_needed(self) -> None:
+        self._start_stock_basic_update(only_if_needed=True)
+
+    def _start_stock_basic_update(self, *, only_if_needed: bool) -> None:
         if not self.service:
             return
         stock_matcher = getattr(self.service, "stock_matcher", None)
         if stock_matcher is not None and not hasattr(stock_matcher, "sync_from_tushare"):
             return
         today = datetime.now().strftime("%Y%m%d")
-        if self.service.stock_update_button_state(today) not in {"generate", "update_enabled"}:
+        if only_if_needed and self.service.stock_update_button_state(today) not in {"generate", "update_enabled"}:
             return
         if self._stock_update_worker and self._stock_update_worker.isRunning():
+            self.status_label.setText("股票基础数据正在更新...")
             return
-        self.stock_update_button.setEnabled(False)
+        self.set_stock_update_state("updating")
         self.status_label.setText("正在更新股票基础数据...")
         try:
             plan = self.service.stock_update_fetch_plan(
                 today=today,
-                executable_dir=Path.cwd(),
+                executable_dir=get_executable_dir(),
                 user_data_dir=get_user_data_dir(),
             )
         except MissingTushareToken as exc:
@@ -602,12 +611,7 @@ class MainWindow(QMainWindow):
         self._refresh_draft_summary()
         self.refresh_date_combo()
 
-        self._clear_layout(self.stock_layout)
-
-        for stock in draft.stocks:
-            self.stock_layout.addWidget(self._make_stock_card(stock))
-
-        self.stock_layout.addStretch(1)
+        self._render_stock_cards_or_empty(draft)
 
         self._refresh_tab_titles()
         if default_to_holding:
@@ -629,10 +633,23 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(2, "持仓")
         self._refresh_stock_jump_combo()
         self._clear_layout(self.stock_layout)
-        empty_label = QLabel("未导入盘后 JSON，也可以直接添加股票并编辑开仓交易单。")
-        empty_label.setObjectName("empty_state_label")
-        self.stock_layout.addWidget(empty_label)
+        self.stock_layout.addWidget(self._make_empty_state_label(read_only=False))
         self.stock_layout.addStretch(1)
+
+    def _render_stock_cards_or_empty(self, draft: SessionDraft) -> None:
+        self._clear_layout(self.stock_layout)
+        if draft.stocks:
+            for stock in draft.stocks:
+                self.stock_layout.addWidget(self._make_stock_card(stock))
+        else:
+            self.stock_layout.addWidget(self._make_empty_state_label(read_only=draft.read_only))
+        self.stock_layout.addStretch(1)
+
+    def _make_empty_state_label(self, *, read_only: bool) -> QLabel:
+        text = "历史日期无本地数据。" if read_only else "未导入盘后 JSON，也可以直接添加股票并编辑开仓交易单。"
+        empty_label = QLabel(text)
+        empty_label.setObjectName("empty_state_label")
+        return empty_label
 
     def _refresh_draft_summary(self) -> None:
         if not self.draft:
@@ -821,7 +838,7 @@ class MainWindow(QMainWindow):
         if worker and worker.isRunning():
             return
         try:
-            token = load_tushare_token(Path.cwd(), get_user_data_dir())
+            token = load_tushare_token(get_executable_dir(), get_user_data_dir())
         except Exception:
             return
         if self._daily_quotes_worker and self._daily_quotes_worker.isRunning():
@@ -1245,7 +1262,7 @@ class MainWindow(QMainWindow):
 
     def _tushare_token_hint(self, user_data_dir: Path) -> str:
         try:
-            token = load_tushare_token(Path.cwd(), user_data_dir)
+            token = load_tushare_token(get_executable_dir(), user_data_dir)
         except MissingTushareToken:
             return "留空表示不修改 TUSHARE_TOKEN"
         if len(token) <= 8:
@@ -1304,22 +1321,7 @@ class MainWindow(QMainWindow):
         if not self.service:
             self.status_label.setText("股票基础数据服务未就绪")
             return
-        today = datetime.now().strftime("%Y%m%d")
-        try:
-            count = self.service.update_stock_basic(
-                today=today,
-                executable_dir=Path.cwd(),
-                user_data_dir=get_user_data_dir(),
-            )
-        except MissingTushareToken as exc:
-            self.status_label.setText(str(exc))
-            return
-        except Exception as exc:
-            self.status_label.setText(f"股票基础数据更新失败: {exc}")
-            return
-        self.status_label.setText(f"股票基础数据已更新: {count} 条")
-        self.refresh_stock_update_button()
-        self.refresh_date_combo()
+        self._start_stock_basic_update(only_if_needed=False)
 
     def _handle_stock_update_finished(self, count: int) -> None:
         self.status_label.setText(f"股票基础数据已更新: {count} 条")

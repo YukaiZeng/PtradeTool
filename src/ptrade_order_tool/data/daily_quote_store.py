@@ -23,15 +23,15 @@ class DailyQuoteStore:
                 (
                     str(row["trade_date"]),
                     str(row["ts_code"]),
-                    float(_decimal(row["open"])),
-                    float(_decimal(row["high"])),
-                    float(_decimal(row["low"])),
-                    float(_decimal(row["close"])),
-                    float(_decimal(row["pre_close"])),
-                    float(_decimal(row["change"])),
-                    float(_decimal(row["pct_chg"])),
-                    float(_decimal(row["vol"])),
-                    float(_decimal(row["amount"])),
+                    _decimal_text(row["open"]),
+                    _decimal_text(row["high"]),
+                    _decimal_text(row["low"]),
+                    _decimal_text(row["close"]),
+                    _decimal_text(row["pre_close"]),
+                    _decimal_text(row["change"]),
+                    _decimal_text(row["pct_chg"]),
+                    _decimal_text(row["vol"]),
+                    _decimal_text(row["amount"]),
                     updated_at,
                 )
             )
@@ -101,6 +101,10 @@ class DailyQuoteStore:
 
 def _decimal(value: object) -> Decimal:
     return Decimal(str(value or "0"))
+
+
+def _decimal_text(value: object) -> str:
+    return format(_decimal(value), "f")
 
 
 def _quote_from_row(row) -> DailyQuote:

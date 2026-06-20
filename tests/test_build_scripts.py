@@ -21,3 +21,5 @@ def test_pyinstaller_spec_only_builds_macos_bundle_on_darwin():
     assert 'name="PtradeOrderTool"' in spec
     assert 'if sys.platform == "darwin":' in spec
     assert spec.index('if sys.platform == "darwin":') < spec.index("BUNDLE(")
+    assert "COLLECT(" in spec
+    assert "hiddenimports=[]" in spec

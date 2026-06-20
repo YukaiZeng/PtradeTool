@@ -74,6 +74,29 @@ def test_open_latest_on_startup_does_not_overwrite_existing_draft(sqlite_conn, t
     assert any(order.id == order_id for stock in second.stocks for order in stock.orders)
 
 
+def test_open_latest_on_startup_replaces_blank_same_date_draft(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
+        FakeStockMatcher(),
+        setup_calendar(sqlite_conn),
+    )
+    service.open_blank_manage_date("20260225")
+    latest = ptrade_dir / "20260225.json"
+    latest.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    draft = service.open_latest_on_startup().draft
+
+    assert draft is not None
+    assert draft.ptrade_json_path == str(latest)
+    assert any(stock.is_holding for stock in draft.stocks)
+
+
 def test_reimport_manage_date_overwrites_existing_draft(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"
@@ -116,6 +139,59 @@ def test_import_ptrade_json_opens_manual_file(sqlite_conn, tmp_path):
 
     assert draft.manage_date == "20260225"
     assert draft.ptrade_json_path == str(manual)
+
+
+def test_import_ptrade_json_replaces_blank_same_date_draft(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    manual = ptrade_dir / "20260225.json"
+    manual.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir="", order_data_dir=str(order_dir)),
+        FakeStockMatcher(),
+        setup_calendar(sqlite_conn),
+    )
+    blank = service.open_blank_manage_date("20260225")
+    assert blank.stocks == []
+
+    draft = service.import_ptrade_json(manual)
+
+    assert draft.manage_date == "20260225"
+    assert draft.ptrade_json_path == str(manual)
+    assert any(stock.is_holding for stock in draft.stocks)
+    assert any(stock.ts_code == "002153.SZ" for stock in draft.stocks)
+
+
+def test_import_ptrade_json_does_not_overwrite_edited_blank_draft(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    manual = ptrade_dir / "20260225.json"
+    manual.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir="", order_data_dir=str(order_dir)),
+        FakeStockMatcher(),
+        setup_calendar(sqlite_conn),
+    )
+    service.open_blank_manage_date("20260225")
+    service.add_manual_stock_by_code("20260225", "600000.SH", stock_name="浦发银行")
+
+    try:
+        service.import_ptrade_json(manual)
+    except ValueError as exc:
+        assert "已有手动草稿" in str(exc)
+    else:
+        raise AssertionError("edited blank draft should not be overwritten")
+
+    draft = service.load_draft("20260225")
+    assert [stock.ts_code for stock in draft.stocks] == ["600000.SH"]
 
 
 def test_reimport_current_draft_uses_original_ptrade_json(sqlite_conn, tmp_path):

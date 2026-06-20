@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
 from ptrade_order_tool.bootstrap import create_app_service
-from ptrade_order_tool.config import get_user_data_dir
+from ptrade_order_tool.config import get_executable_dir, get_user_data_dir
 from ptrade_order_tool.data.stock_master import MissingTushareToken
 from ptrade_order_tool.ui.main_window import MainWindow
 from ptrade_order_tool.ui.styles import apply_app_style
@@ -31,7 +30,7 @@ def prepare_trade_calendar(service) -> None:
     try:
         service.maintain_trade_calendar(
             today=datetime.now().strftime("%Y%m%d"),
-            executable_dir=Path.cwd(),
+            executable_dir=get_executable_dir(),
             user_data_dir=get_user_data_dir(),
         )
     except MissingTushareToken:

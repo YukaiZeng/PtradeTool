@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -37,6 +38,12 @@ def get_config_path(user_data_dir: Path | None = None) -> Path:
     return (user_data_dir or get_user_data_dir()) / "config.json"
 
 
+def get_executable_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
 def load_config(user_data_dir: Path | None = None) -> AppConfig:
     config_path = get_config_path(user_data_dir)
     if not config_path.exists():
@@ -54,4 +61,3 @@ def save_config(config: AppConfig, user_data_dir: Path | None = None) -> Path:
         encoding="utf-8",
     )
     return config_path
-

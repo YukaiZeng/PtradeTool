@@ -207,3 +207,26 @@ def test_order_confirmation_change_delete_and_restore(sqlite_conn):
     restored_id = store.restore_deleted_order(snapshot)
     assert restored_id != order_id
     assert any(order.id == restored_id for stock in store.load_draft("20260225").stocks for order in stock.orders)
+
+
+def test_decimal_values_are_persisted_without_float_rounding(sqlite_conn):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+    )
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("0.29"), 100)
+
+    row = sqlite_conn.execute("select price from orders where id = ?", (order_id,)).fetchone()
+    loaded_order = next(
+        order
+        for stock in store.load_draft("20260225").stocks
+        for order in stock.orders
+        if order.id == order_id
+    )
+
+    assert row["price"] == "0.29"
+    assert loaded_order.price == Decimal("0.29")

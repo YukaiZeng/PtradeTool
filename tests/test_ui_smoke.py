@@ -588,6 +588,77 @@ def test_auto_update_keeps_stock_worker_alive_until_finished(qtbot, monkeypatch)
     assert workers[0] in window._background_workers
 
 
+def test_manual_stock_update_uses_background_worker(qtbot, monkeypatch):
+    started = []
+    sync_calls = []
+
+    class FakeSignal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+    class RunningWorker:
+        def __init__(self, *args, **kwargs):
+            self.finishedWithRows = FakeSignal()
+            self.failedWithMessage = FakeSignal()
+            self.finished = FakeSignal()
+            started.append(args)
+
+        def isRunning(self):
+            return True
+
+        def start(self):
+            return None
+
+        def requestInterruption(self):
+            return None
+
+        def quit(self):
+            return None
+
+        def wait(self, _ms):
+            return True
+
+    class FakeService:
+        class FakeStockMatcher:
+            def sync_from_tushare(self):
+                return None
+
+        stock_matcher = FakeStockMatcher()
+
+        def stock_update_button_state(self, today):
+            return "update_enabled"
+
+        def list_manage_dates(self):
+            return []
+
+        def stock_update_fetch_plan(self, **kwargs):
+            return {
+                "token": "token",
+                "today": "20260609",
+                "calendar_start_date": "20260101",
+                "calendar_end_date": "20271231",
+            }
+
+        def update_stock_basic(self, **kwargs):
+            sync_calls.append(kwargs)
+            return 1
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.StockUpdateWorker", RunningWorker)
+
+    window = MainWindow(service=FakeService(), auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    window._handle_stock_update()
+
+    assert len(started) == 1
+    assert sync_calls == []
+    assert window.stock_update_button.text() == "更新中..."
+    assert window.stock_update_button.isEnabled() is False
+    assert window._stock_update_worker in window._background_workers
+
+
 def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
     initialize_schema(sqlite_conn)
     imported = parse_ptrade_json(PTRADER_FIXTURE, FakeStockMatcher())

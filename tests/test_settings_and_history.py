@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
@@ -58,7 +59,7 @@ def test_service_lists_manage_dates(sqlite_conn, tmp_path):
 
 
 def test_date_combo_switches_to_historical_read_only(qtbot, sqlite_conn, tmp_path):
-    service, _, _ = make_service(sqlite_conn, tmp_path)
+    service, _, _ = make_service(sqlite_conn, tmp_path, now_provider=lambda: datetime(2026, 2, 26, 17, 31))
     imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
     imported.manage_date = "20260226"
     service.drafts.create_draft(
@@ -311,6 +312,7 @@ def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path
         ptrade_json_path="/tmp/20260226.json",
         export_json_path="/tmp/order_data/20260226.json",
     )
+    service._now_provider = lambda: datetime(2026, 2, 26, 17, 31)
     window = MainWindow(service.load_draft("20260225"), service, auto_update_stock_basic=False)
     qtbot.addWidget(window)
 
@@ -327,7 +329,7 @@ def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path
 
 
 def test_delete_history_action_removes_selected_date(qtbot, sqlite_conn, tmp_path, monkeypatch):
-    service, _, _ = make_service(sqlite_conn, tmp_path)
+    service, _, _ = make_service(sqlite_conn, tmp_path, now_provider=lambda: datetime(2026, 2, 26, 17, 31))
     imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
     imported.manage_date = "20260226"
     service.drafts.create_draft(

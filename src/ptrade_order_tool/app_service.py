@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.daily_quote_store import DailyQuoteStore
@@ -20,6 +21,8 @@ from ptrade_order_tool.models import DailyQuote, ExportValidation, FundSnapshot,
 
 
 PTRADER_JSON_RE = re.compile(r"^\d{8}\.json$")
+CURRENT_TRADE_DAY_CUTOFF = time(17, 30)
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(slots=True)
@@ -35,6 +38,8 @@ class AppService:
         config: AppConfig,
         stock_matcher: StockMatcher,
         calendar: TradeCalendar,
+        *,
+        now_provider=None,
     ) -> None:
         self.conn = conn
         self.config = config
@@ -42,17 +47,24 @@ class AppService:
         self.calendar = calendar
         self.drafts = DraftStore(conn)
         self.daily_quotes = DailyQuoteStore(conn)
+        self._now_provider = now_provider or (lambda: datetime.now(BEIJING_TZ))
         self.logger = get_logger()
 
-    def open_latest_on_startup(self, *, today: str | None = None) -> StartupResult:
-        latest_path = find_latest_ptrade_json(self.config.ptrade_data_dir)
-        if latest_path is None:
-            self.logger.info("startup_open_latest missing ptrade_data_dir=%s", self.config.ptrade_data_dir)
-            manage_date = self._default_blank_manage_date(today or self._today())
-            draft = self.open_blank_manage_date(manage_date)
-            return StartupResult(draft, "未找到盘后 JSON，已创建空白交易单")
-        self.logger.info("startup_open_latest path=%s", latest_path)
-        return StartupResult(self._create_or_open_from_path(latest_path, overwrite=False), "已打开最新管理日期")
+    def open_latest_on_startup(self, *, today: str | None = None, now: datetime | None = None) -> StartupResult:
+        today = today or self._today(now)
+        current_manage_date = self.current_editable_manage_date(today=today, now=now)
+        target_path = find_ptrade_json_for_date(self.config.ptrade_data_dir, current_manage_date)
+        if target_path is not None:
+            self.logger.info("startup_open_latest path=%s", target_path)
+            draft = self._create_or_open_from_path(target_path, overwrite=False)
+            return StartupResult(self._with_read_only_state(draft, today=today, now=now), "已打开最新管理日期")
+        try:
+            draft = self.drafts.load_draft(current_manage_date)
+        except KeyError:
+            self.logger.info("startup_open_latest missing ptrade_data_dir=%s manage_date=%s", self.config.ptrade_data_dir, current_manage_date)
+            draft = self.open_blank_manage_date(current_manage_date)
+            return StartupResult(self._with_read_only_state(draft, today=today, now=now), "未找到盘后 JSON，已创建空白交易单")
+        return StartupResult(self._with_read_only_state(draft, today=today, now=now), "已打开当前管理日期")
 
     def reimport_manage_date(self, ptrade_json_path: Path) -> SessionDraft:
         return self._create_or_open_from_path(ptrade_json_path, overwrite=True)
@@ -69,7 +81,7 @@ class AppService:
         return self._create_or_open_from_path(Path(draft.ptrade_json_path), overwrite=True)
 
     def load_draft(self, manage_date: str) -> SessionDraft:
-        return self.drafts.load_draft(manage_date)
+        return self._with_read_only_state(self.drafts.load_draft(manage_date))
 
     def open_blank_manage_date(self, manage_date: str) -> SessionDraft:
         return self._create_or_open_blank(manage_date)
@@ -77,10 +89,10 @@ class AppService:
     def empty_manage_date_view(self, manage_date: str) -> SessionDraft:
         return self._empty_draft(manage_date, export_state="empty")
 
-    def list_manage_dates(self, *, today: str | None = None) -> list[str]:
+    def list_manage_dates(self, *, today: str | None = None, now: datetime | None = None) -> list[str]:
         session_dates = set(self.drafts.list_manage_dates())
-        today = today or self._today()
-        latest_trade_date = self.calendar.latest_trade_day_on_or_before(today) or max(session_dates, default=today)
+        today = today or self._today(now)
+        latest_trade_date = self.current_editable_manage_date(today=today, now=now)
         start_date = self._manage_date_range_start(today=today, latest_trade_date=latest_trade_date)
         calendar_dates = set(self.calendar.trade_days_between(start_date, latest_trade_date))
         if not calendar_dates and not session_dates:
@@ -102,7 +114,7 @@ class AppService:
         self.drafts.confirm_order(order_id)
         manage_date = self._manage_date_for_order(order_id)
         self.logger.info("order_confirmed manage_date=%s order_id=%s type=%s price=%s shares=%s", manage_date, order_id, order_type, price, shares)
-        return self.drafts.load_draft(manage_date)
+        return self.load_draft(manage_date)
 
     def update_order_change(
         self,
@@ -115,7 +127,7 @@ class AppService:
         self.drafts.save_order_change(order_id, price=price, shares=shares, order_type=order_type)
         manage_date = self._manage_date_for_order(order_id)
         self.logger.info("order_changed manage_date=%s order_id=%s type=%s price=%s shares=%s", manage_date, order_id, order_type, price, shares)
-        return self.drafts.load_draft(manage_date)
+        return self.load_draft(manage_date)
 
     def add_order(
         self,
@@ -136,7 +148,7 @@ class AppService:
             source="manual",
         )
         self.logger.info("order_added manage_date=%s ts_code=%s type=%s", manage_date, ts_code, order_type)
-        return self.drafts.load_draft(manage_date)
+        return self.load_draft(manage_date)
 
     def add_manual_stock(self, manage_date: str, query: str) -> SessionDraft:
         candidates = self.search_manual_stock_candidates(query, limit=2)
@@ -157,7 +169,7 @@ class AppService:
             stock["name"] if stock else stock_name,
         )
         self.logger.info("manual_stock_added manage_date=%s ts_code=%s", manage_date, stock["ts_code"] if stock else ts_code)
-        return self.drafts.load_draft(manage_date)
+        return self.load_draft(manage_date)
 
     def search_manual_stock_candidates(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
         text = query.strip()
@@ -267,18 +279,18 @@ class AppService:
         manage_date = self._manage_date_for_order(order_id)
         self.drafts.delete_order(order_id)
         self.logger.info("order_deleted manage_date=%s order_id=%s", manage_date, order_id)
-        return self.drafts.load_draft(manage_date)
+        return self.load_draft(manage_date)
 
     def delete_order_with_snapshot(self, order_id: int) -> tuple[SessionDraft, dict[str, Any]]:
         manage_date = self._manage_date_for_order(order_id)
         snapshot = self.drafts.delete_order(order_id)
         self.logger.info("order_deleted manage_date=%s order_id=%s", manage_date, order_id)
-        return self.drafts.load_draft(manage_date), snapshot
+        return self.load_draft(manage_date), snapshot
 
     def delete_stock_with_snapshot(self, manage_date: str, ts_code: str) -> tuple[SessionDraft, dict[str, Any]]:
         snapshot = self.drafts.delete_stock(manage_date, ts_code)
         self.logger.info("stock_deleted manage_date=%s ts_code=%s", manage_date, ts_code)
-        return self.drafts.load_draft(manage_date), snapshot
+        return self.load_draft(manage_date), snapshot
 
     def delete_manage_date(self, manage_date: str) -> None:
         self.drafts.delete_draft(manage_date)
@@ -287,10 +299,10 @@ class AppService:
     def restore_deleted_order(self, snapshot: dict[str, Any]) -> SessionDraft:
         self.drafts.restore_deleted_order(snapshot)
         self.logger.info("order_restored manage_date=%s ts_code=%s", snapshot["manage_date"], snapshot["ts_code"])
-        return self.drafts.load_draft(str(snapshot["manage_date"]))
+        return self.load_draft(str(snapshot["manage_date"]))
 
     def export_draft(self, manage_date: str, *, allow_overwrite: bool = False) -> ExportValidation:
-        draft = self.drafts.load_draft(manage_date)
+        draft = self.load_draft(manage_date)
         validation = validate_export(draft)
         if not validation.can_export:
             return validation
@@ -303,7 +315,7 @@ class AppService:
         return validation
 
     def validate_draft_for_export(self, manage_date: str) -> ExportValidation:
-        return validate_export(self.drafts.load_draft(manage_date))
+        return validate_export(self.load_draft(manage_date))
 
     def load_daily_quotes(
         self,
@@ -364,14 +376,14 @@ class AppService:
         export_json_path = ""
         if self.config.order_data_dir:
             export_json_path = str(Path(self.config.order_data_dir) / f"{imported.manage_date}.json")
-        return self.drafts.create_draft(
+        return self._with_read_only_state(self.drafts.create_draft(
             imported,
             expected_trade_date=expected_trade_date,
             ptrade_json_path=str(ptrade_json_path),
             export_json_path=export_json_path,
             previous_order_path=previous_order_path,
             overwrite=overwrite,
-        )
+        ))
 
     def _blank_draft_can_be_replaced(self, manage_date: str, *, raise_on_edited: bool) -> bool:
         try:
@@ -392,13 +404,13 @@ class AppService:
         if self.config.order_data_dir:
             export_json_path = str(Path(self.config.order_data_dir) / f"{manage_date}.json")
         self.logger.info("blank_draft_opened manage_date=%s", manage_date)
-        return self.drafts.create_draft(
+        return self._with_read_only_state(self.drafts.create_draft(
             imported,
             expected_trade_date=self.calendar.next_trade_day(manage_date),
             ptrade_json_path="",
             export_json_path=export_json_path,
             overwrite=False,
-        )
+        ))
 
     def _empty_draft(self, manage_date: str, *, export_state: str = "draft") -> SessionDraft:
         export_json_path = ""
@@ -412,7 +424,7 @@ class AppService:
             ptrade_json_path="",
             export_json_path=export_json_path,
             export_state=export_state,
-            read_only=self._empty_view_is_read_only(manage_date) if export_state == "empty" else False,
+            read_only=self._manage_date_is_read_only(manage_date) if export_state == "empty" else False,
         )
 
     def _empty_fund(self) -> FundSnapshot:
@@ -430,7 +442,13 @@ class AppService:
             raise KeyError(f"Order not found: {order_id}")
         return str(row["manage_date"])
 
-    def _default_blank_manage_date(self, today: str) -> str:
+    def current_editable_manage_date(self, *, today: str | None = None, now: datetime | None = None) -> str:
+        today = today or self._today(now)
+        if self.calendar.is_trade_day(today):
+            current_time = (now or self._now()).time()
+            if current_time > CURRENT_TRADE_DAY_CUTOFF:
+                return today
+            return self.calendar.previous_trade_day(today) or today
         return self.calendar.latest_trade_day_on_or_before(today) or today
 
     def _earliest_ptrade_json_date(self) -> str:
@@ -454,18 +472,30 @@ class AppService:
     def _calendar_lookback_start(self, today: str) -> str:
         return (datetime.strptime(today, "%Y%m%d") - timedelta(days=45)).strftime("%Y%m%d")
 
-    def _today(self) -> str:
-        return datetime.now().strftime("%Y%m%d")
+    def _today(self, now: datetime | None = None) -> str:
+        return (now or self._now()).strftime("%Y%m%d")
 
-    def _empty_view_is_read_only(self, manage_date: str) -> bool:
-        later_session = self.conn.execute(
-            "select 1 from sessions where manage_date > ? limit 1",
-            (manage_date,),
-        ).fetchone()
-        if later_session:
-            return True
-        latest_calendar_day = self.calendar.latest_trade_day_on_or_before(self._today())
-        return bool(latest_calendar_day and manage_date < latest_calendar_day)
+    def _now(self) -> datetime:
+        return self._now_provider()
+
+    def _with_read_only_state(
+        self,
+        draft: SessionDraft,
+        *,
+        today: str | None = None,
+        now: datetime | None = None,
+    ) -> SessionDraft:
+        draft.read_only = self._manage_date_is_read_only(draft.manage_date, today=today, now=now)
+        return draft
+
+    def _manage_date_is_read_only(
+        self,
+        manage_date: str,
+        *,
+        today: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        return manage_date < self.current_editable_manage_date(today=today, now=now)
 
 
 def find_latest_ptrade_json(ptrade_data_dir: str) -> Path | None:
@@ -482,6 +512,15 @@ def find_latest_ptrade_json(ptrade_data_dir: str) -> Path | None:
     if not candidates:
         return None
     return max(candidates, key=lambda path: path.stem)
+
+
+def find_ptrade_json_for_date(ptrade_data_dir: str, manage_date: str) -> Path | None:
+    if not ptrade_data_dir:
+        return None
+    path = Path(ptrade_data_dir) / f"{manage_date}.json"
+    if path.is_file() and PTRADER_JSON_RE.match(path.name):
+        return path
+    return None
 
 
 def find_earliest_ptrade_json(ptrade_data_dir: str) -> Path | None:

@@ -1,13 +1,15 @@
+from datetime import datetime
 from decimal import Decimal
 
 from ptrade_order_tool.app_service import AppService
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.db import initialize_schema
+from ptrade_order_tool.data.ptrade_importer import parse_ptrade_json
 from ptrade_order_tool.data.trade_calendar import TradeCalendar
 from tests.test_ptrade_importer import FIXTURE, FakeStockMatcher
 
 
-def make_service(sqlite_conn, tmp_path):
+def make_service(sqlite_conn, tmp_path, *, now_provider=None):
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"
     order_dir = tmp_path / "order_data"
@@ -28,6 +30,7 @@ def make_service(sqlite_conn, tmp_path):
         AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
         FakeStockMatcher(),
         calendar,
+        now_provider=now_provider or (lambda: datetime(2026, 2, 25, 17, 31)),
     )
     draft = service.open_latest_on_startup().draft
     return service, draft, order_dir
@@ -195,3 +198,22 @@ def test_export_draft_writes_file_and_marks_exported(sqlite_conn, tmp_path):
     assert validation.can_export is True
     assert (order_dir / "20260225.json").exists()
     assert service.load_draft("20260225").export_state == "exported"
+
+
+def test_export_draft_uses_current_editable_manage_date_for_read_only_state(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path, now_provider=lambda: datetime(2026, 2, 26, 17, 29))
+    imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+    imported.manage_date = "20260226"
+    service.drafts.create_draft(
+        imported,
+        expected_trade_date=None,
+        ptrade_json_path="/tmp/20260226.json",
+        export_json_path="/tmp/order_data/20260226.json",
+    )
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    service.update_and_confirm_order(order_id, price=Decimal("11.4"), shares=1400, order_type="buy_limit")
+
+    validation = service.export_draft("20260225")
+
+    assert validation.can_export is True
+    assert service.load_draft("20260225").read_only is False

@@ -85,11 +85,11 @@ def _validate_holding_totals(
     loss_total = sum(order.shares for order in confirmed if order.order_type == "sell_loss")
     if profit_total != holding_amount:
         validation.warnings.append(
-            f"{stock.ts_code} {stock.stock_name} 止盈合计 {profit_total} 不等于持仓数量 {holding_amount}"
+            f"{stock.ts_code} {stock.stock_name} 止盈合计 {_format_shares(profit_total)} 不等于持仓数量 {_format_shares(holding_amount)}"
         )
     if loss_total != holding_amount:
         validation.warnings.append(
-            f"{stock.ts_code} {stock.stock_name} 止损合计 {loss_total} 不等于持仓数量 {holding_amount}"
+            f"{stock.ts_code} {stock.stock_name} 止损合计 {_format_shares(loss_total)} 不等于持仓数量 {_format_shares(holding_amount)}"
         )
 
 
@@ -106,11 +106,11 @@ def _validate_opening_totals(
         validation.warnings.append(f"{stock.ts_code} {stock.stock_name} 无买单但存在卖单计划")
     if profit_total and profit_total != buy_total:
         validation.warnings.append(
-            f"{stock.ts_code} {stock.stock_name} 止盈合计 {profit_total} 不等于买单合计 {buy_total}"
+            f"{stock.ts_code} {stock.stock_name} 止盈合计 {_format_shares(profit_total)} 不等于买单合计 {_format_shares(buy_total)}"
         )
     if loss_total and loss_total != buy_total:
         validation.warnings.append(
-            f"{stock.ts_code} {stock.stock_name} 止损合计 {loss_total} 不等于买单合计 {buy_total}"
+            f"{stock.ts_code} {stock.stock_name} 止损合计 {_format_shares(loss_total)} 不等于买单合计 {_format_shares(buy_total)}"
         )
 
 
@@ -134,3 +134,7 @@ def _json_price(price: Decimal) -> int | float:
     if normalized == normalized.to_integral_value():
         return int(normalized)
     return float(price)
+
+
+def _format_shares(shares: int) -> str:
+    return f"{shares:,}"

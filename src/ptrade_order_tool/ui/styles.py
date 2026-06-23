@@ -512,7 +512,7 @@ QLabel#order_field_label {
 QLabel#order_amount_label {
     color: #334155;
     font-weight: 800;
-    padding-left: 6px;
+    padding-left: 0;
 }
 
 QPushButton#digit_button {
@@ -544,6 +544,13 @@ QPushButton#digit_button:disabled {
 }
 
 QLabel#digit_decimal_point {
+    color: #667085;
+    font-size: 18px;
+    font-weight: 800;
+    padding-top: 8px;
+}
+
+QLabel#digit_thousands_separator {
     color: #667085;
     font-size: 18px;
     font-weight: 800;

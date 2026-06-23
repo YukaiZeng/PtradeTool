@@ -209,6 +209,50 @@ def test_order_confirmation_change_delete_and_restore(sqlite_conn):
     assert any(order.id == restored_id for stock in store.load_draft("20260225").stocks for order in stock.orders)
 
 
+def test_exported_draft_stays_modified_after_multiple_edits(sqlite_conn):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+    )
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    store.confirm_order(order_id)
+    store.mark_exported(draft.manage_date)
+
+    store.save_order_change(order_id, price=Decimal("11.5"), shares=1500, order_type="buy_limit")
+    assert store.load_draft(draft.manage_date).export_state == "modified_after_export"
+
+    store.confirm_order(order_id)
+    assert store.load_draft(draft.manage_date).export_state == "modified_after_export"
+
+
+def test_save_and_confirm_order_updates_values_and_confirmation_together(sqlite_conn):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+    )
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+
+    store.save_and_confirm_order(order_id, price=Decimal("11.5"), shares=1500, order_type="buy_limit")
+
+    order = next(
+        order
+        for stock in store.load_draft(draft.manage_date).stocks
+        for order in stock.orders
+        if order.id == order_id
+    )
+    assert order.price == Decimal("11.5")
+    assert order.shares == 1500
+    assert order.confirmed is True
+
+
 def test_decimal_values_are_persisted_without_float_rounding(sqlite_conn):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)

@@ -254,9 +254,7 @@ class DraftStore:
         self.conn.commit()
 
     def save_order_change(self, order_id: int, *, price: Decimal, shares: int, order_type: OrderType) -> None:
-        row = self.conn.execute("select manage_date from orders where id = ?", (order_id,)).fetchone()
-        if not row:
-            raise KeyError(f"Order not found: {order_id}")
+        manage_date = self._order_manage_date(order_id)
         self.conn.execute(
             """
             update orders
@@ -265,15 +263,30 @@ class DraftStore:
             """,
             (_decimal_text(price), int(shares), order_type, order_id),
         )
-        self._mark_modified(row["manage_date"])
+        self._mark_modified(manage_date)
         self.conn.commit()
 
+    def save_and_confirm_order(self, order_id: int, *, price: Decimal, shares: int, order_type: OrderType) -> None:
+        manage_date = self._order_manage_date(order_id)
+        try:
+            self.conn.execute(
+                """
+                update orders
+                set price = ?, shares = ?, order_type = ?, confirmed = 1
+                where id = ?
+                """,
+                (_decimal_text(price), int(shares), order_type, order_id),
+            )
+            self._mark_modified(manage_date)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def confirm_order(self, order_id: int) -> None:
-        row = self.conn.execute("select manage_date from orders where id = ?", (order_id,)).fetchone()
-        if not row:
-            raise KeyError(f"Order not found: {order_id}")
+        manage_date = self._order_manage_date(order_id)
         self.conn.execute("update orders set confirmed = 1 where id = ?", (order_id,))
-        self._mark_modified(row["manage_date"])
+        self._mark_modified(manage_date)
         self.conn.commit()
 
     def delete_order(self, order_id: int) -> dict[str, Any]:
@@ -547,12 +560,18 @@ class DraftStore:
         ).fetchone()
         return int(row["next_sort"])
 
+    def _order_manage_date(self, order_id: int) -> str:
+        row = self.conn.execute("select manage_date from orders where id = ?", (order_id,)).fetchone()
+        if not row:
+            raise KeyError(f"Order not found: {order_id}")
+        return str(row["manage_date"])
+
     def _mark_modified(self, manage_date: str) -> None:
         row = self.conn.execute(
             "select export_state from sessions where manage_date = ?",
             (manage_date,),
         ).fetchone()
-        export_state = "modified_after_export" if row and row["export_state"] == "exported" else "draft"
+        export_state = "modified_after_export" if row and row["export_state"] in {"exported", "modified_after_export"} else "draft"
         self.conn.execute(
             "update sessions set export_state = ?, updated_at = ? where manage_date = ?",
             (export_state, datetime.now().isoformat(timespec="seconds"), manage_date),

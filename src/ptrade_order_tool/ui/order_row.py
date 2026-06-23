@@ -73,11 +73,13 @@ class OrderRow(QWidget):
         self.confirm_button = QPushButton("确认")
         self.confirm_button.setObjectName("order_confirm_button")
         self.confirm_button.setFixedWidth(44)
+        self.confirm_button.setCursor(Qt.PointingHandCursor)
         self.confirm_button.clicked.connect(lambda: self.confirmRequested.emit(self))
 
         self.delete_button = QPushButton("删除")
         self.delete_button.setObjectName("order_delete_button")
         self.delete_button.setFixedWidth(44)
+        self.delete_button.setCursor(Qt.PointingHandCursor)
         self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self))
 
         self.type_combo.hide()

@@ -30,6 +30,23 @@ def test_confirm_button_updates_database(qtbot, sqlite_conn, tmp_path):
     assert "订单已确认" in window.status_label.text()
 
 
+def test_confirm_preserves_added_share_digit_width(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    window = MainWindow(service.load_draft("20260225"), service)
+    qtbot.addWidget(window)
+    row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+
+    row.shares_input.add_high_digit()
+    assert row.shares_input.text() == "01400"
+
+    qtbot.mouseClick(row.confirm_button, Qt.LeftButton)
+
+    updated_rows = [row for row in window.findChildren(OrderRow) if row.order.id == order_id]
+    assert all(row.shares_input.text() == "01400" for row in updated_rows)
+    assert all(row.shares_input.integer_width() == 5 for row in updated_rows)
+
+
 def test_delete_button_removes_order_from_database(qtbot, sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
@@ -677,7 +694,7 @@ def test_check_export_button_reports_warnings_without_blockers(qtbot, sqlite_con
     pending, blockers, warnings = captured[0]
     assert pending == []
     assert blockers == []
-    assert any("止盈合计 1400 不等于持仓数量" in item for item in warnings)
+    assert any("止盈合计 1,400 不等于持仓数量" in item for item in warnings)
     assert "导出检查: " in window.status_label.text()
     assert "个提醒项" in window.status_label.text()
     assert window.check_export_button.property("tone") == "warning"

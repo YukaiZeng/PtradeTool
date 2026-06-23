@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from ptrade_order_tool.bootstrap import create_app_service
@@ -16,11 +17,11 @@ def main() -> int:
     app = QApplication(sys.argv)
     apply_app_style(app)
     service = create_app_service()
-    prepare_trade_calendar(service)
     startup = service.open_latest_on_startup()
     window = MainWindow(startup.draft, service, auto_update_daily_quotes=True)
     window.set_startup_message(startup.message)
     window.show()
+    QTimer.singleShot(0, lambda: prepare_trade_calendar(service))
     return app.exec()
 
 

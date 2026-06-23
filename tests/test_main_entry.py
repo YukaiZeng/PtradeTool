@@ -55,9 +55,19 @@ class FakeWindow:
         self.shown = True
 
 
+class FakeTimer:
+    callbacks = []
+
+    @staticmethod
+    def singleShot(delay, callback):  # noqa: N802
+        FakeTimer.callbacks.append((delay, callback))
+
+
 def test_main_injects_service_into_main_window(monkeypatch):
     service = FakeService()
+    FakeTimer.callbacks = []
     monkeypatch.setattr(main_module, "QApplication", FakeApp)
+    monkeypatch.setattr(main_module, "QTimer", FakeTimer)
     monkeypatch.setattr(main_module, "create_app_service", lambda: service)
     monkeypatch.setattr(main_module, "MainWindow", FakeWindow)
     monkeypatch.setattr(main_module.sys, "argv", ["ptrade-order-tool"])
@@ -65,7 +75,13 @@ def test_main_injects_service_into_main_window(monkeypatch):
     exit_code = main_module.main()
 
     assert exit_code == 0
-    assert [name for name, _ in service.calls] == ["maintain_trade_calendar", "open_latest_on_startup"]
+    assert [name for name, _ in service.calls] == ["open_latest_on_startup"]
     assert FakeWindow.instance.service is service
     assert FakeWindow.instance.message == "ok"
     assert FakeWindow.instance.shown is True
+    assert len(FakeTimer.callbacks) == 1
+    assert FakeTimer.callbacks[0][0] == 0
+
+    FakeTimer.callbacks[0][1]()
+
+    assert [name for name, _ in service.calls] == ["open_latest_on_startup", "maintain_trade_calendar"]

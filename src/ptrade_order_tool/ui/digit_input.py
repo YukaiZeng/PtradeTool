@@ -71,6 +71,7 @@ class DigitInput(QWidget):
         self._active_menu_actions: list[QAction] = []
         self._menu_highlight_index = 0
         self._buttons: list[DigitButton] = []
+        self._separator_width = 8
 
         self.setFocusPolicy(Qt.StrongFocus)
         self._layout = QHBoxLayout(self)
@@ -84,12 +85,31 @@ class DigitInput(QWidget):
             return f"{integer}.{''.join(self._fraction_digits)}"
         return integer
 
+    def integer_width(self) -> int:
+        return len(self._integer_digits)
+
+    def set_integer_width(self, width: int) -> None:
+        significant_integer = "".join(self._integer_digits).lstrip("0") or "0"
+        target_width = max(width, self.default_integer_digits, len(significant_integer))
+        if target_width == len(self._integer_digits):
+            return
+        while len(self._integer_digits) < target_width:
+            self._integer_digits.insert(0, "0")
+        while len(self._integer_digits) > target_width:
+            self._integer_digits.pop(0)
+        self._cursor = min(self._cursor, max(0, len(self._editable_digits()) - 1))
+        self._cursor_at_end = False
+        self._rebuild()
+        self._update_cursor_style()
+        self._update_fixed_width()
+
     def value(self) -> Decimal | int:
         if self.kind == "price":
             return Decimal(self.text())
         return int(self.text())
 
     def set_value(self, value: Decimal | int | float | str) -> None:
+        old_integer_width = len(self._integer_digits)
         if self.kind == "price":
             text = f"{Decimal(str(value)):.2f}"
             integer, fraction = text.split(".")
@@ -103,7 +123,10 @@ class DigitInput(QWidget):
         self._cursor = 0
         self._cursor_visible = False
         self._cursor_at_end = False
-        self._refresh()
+        if len(self._integer_digits) == old_integer_width:
+            self._refresh()
+        else:
+            self._rebuild()
         self._update_cursor_style()
         self._update_fixed_width()
         self.valueChanged.emit()
@@ -318,6 +341,7 @@ class DigitInput(QWidget):
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget:
+                widget.setParent(None)
                 widget.deleteLater()
 
         self._buttons = []
@@ -330,6 +354,12 @@ class DigitInput(QWidget):
                 editable_index += 1
             self._buttons.append(button)
             self._layout.addWidget(button)
+            if self._has_thousands_separator_after(index):
+                separator = QLabel(",")
+                separator.setObjectName("digit_thousands_separator")
+                separator.setAlignment(Qt.AlignCenter)
+                separator.setFixedSize(self._separator_width, 30)
+                self._layout.addWidget(separator)
 
         if self.kind == "price":
             dot_label = QLabel(".")
@@ -397,6 +427,13 @@ class DigitInput(QWidget):
                 return button
         return None
 
+    def _has_thousands_separator_after(self, integer_index: int) -> bool:
+        digits_to_right = len(self._integer_digits) - integer_index - 1
+        return digits_to_right > 0 and digits_to_right % 3 == 0
+
+    def _thousands_separator_count(self) -> int:
+        return max(0, (len(self._integer_digits) - 1) // 3)
+
     def _update_cursor_style(self) -> None:
         for button in self._buttons:
             button.setProperty("digitCursor", self._cursor_visible and button.editable and button.index == self._cursor)
@@ -417,8 +454,11 @@ class DigitInput(QWidget):
 
     def _update_fixed_width(self) -> None:
         digit_count = len(self._integer_digits) + len(self._fraction_digits)
+        separator_count = self._thousands_separator_count()
         dot_width = 8 if self.kind == "price" else 0
-        width = digit_count * 26 + max(0, digit_count - 1) * 2 + dot_width
+        widget_count = digit_count + separator_count + (1 if self.kind == "price" else 0)
+        width = digit_count * 26 + separator_count * self._separator_width + dot_width
+        width += max(0, widget_count - 1) * self._layout.spacing()
         self.setFixedWidth(width)
 
     def _cleanup_cursor_state(self) -> None:

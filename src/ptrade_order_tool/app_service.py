@@ -110,8 +110,7 @@ class AppService:
         shares: int,
         order_type: OrderType,
     ) -> SessionDraft:
-        self.drafts.save_order_change(order_id, price=price, shares=shares, order_type=order_type)
-        self.drafts.confirm_order(order_id)
+        self.drafts.save_and_confirm_order(order_id, price=price, shares=shares, order_type=order_type)
         manage_date = self._manage_date_for_order(order_id)
         self.logger.info("order_confirmed manage_date=%s order_id=%s type=%s price=%s shares=%s", manage_date, order_id, order_type, price, shares)
         return self.load_draft(manage_date)

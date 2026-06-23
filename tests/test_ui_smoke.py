@@ -339,6 +339,7 @@ def test_stock_card_formats_holding_value_profit_and_daily_amount(qtbot):
 
     assert [item.split(" ", 1)[0] for item in metrics] == ["市值", "持仓", "成本", "盈亏"]
     assert "市值 1,234,567.80" in metrics
+    assert "持仓 1,200" in metrics
     assert "盈亏 -2,345.67" in metrics
     assert profit_metric.property("tone") in {None, ""}
     assert card.findChild(QLabel, "stock_daily_amount").text() == "2.50亿"
@@ -523,6 +524,8 @@ def test_auto_update_runs_when_stock_data_missing(qtbot, monkeypatch):
     window = MainWindow(service=FakeService(), auto_update_stock_basic=True)
     qtbot.addWidget(window)
 
+    assert started == []
+    qtbot.waitUntil(lambda: started == [True])
     assert started == [True]
 
 
@@ -584,6 +587,8 @@ def test_auto_update_keeps_stock_worker_alive_until_finished(qtbot, monkeypatch)
     window = MainWindow(service=FakeService(), auto_update_stock_basic=True)
     qtbot.addWidget(window)
 
+    assert workers == []
+    qtbot.waitUntil(lambda: workers == [window._stock_update_worker])
     assert workers == [window._stock_update_worker]
     assert workers[0] in window._background_workers
 
@@ -679,7 +684,7 @@ def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
     statuses = [label.toolTip() for label in window.findChildren(QLabel, "order_status_indicator")]
     pending_badges = [label.text() for label in window.findChildren(type(window.total_label), "pending_order_badge")]
 
-    assert any("止盈合计 1400，不等于持仓 2800" in item for item in warnings)
+    assert any("止盈合计 1,400，不等于持仓 2,800" in item for item in warnings)
     assert not any(item.startswith("可卖 ") for item in metrics)
     assert "已确认" in statuses
     assert pending_badges == []

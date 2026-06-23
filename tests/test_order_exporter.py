@@ -125,7 +125,7 @@ def test_opening_sell_total_mismatch_warns_not_blocks(sqlite_conn):
     validation = validate_export(store.load_draft("20260225"))
 
     assert validation.can_export is True
-    assert any("止盈合计 500 不等于买单合计 1000" in item for item in validation.warnings)
+    assert any("止盈合计 500 不等于买单合计 1,000" in item for item in validation.warnings)
 
 
 def test_opening_stock_export_preserves_stock_name(sqlite_conn):

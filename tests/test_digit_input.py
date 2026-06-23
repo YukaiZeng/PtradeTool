@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMenu, QPushButton
+from PySide6.QtWidgets import QLabel, QMenu, QPushButton
 
 from ptrade_order_tool.models import OrderDraft
 from ptrade_order_tool.ui.digit_input import DigitInput
@@ -43,6 +43,25 @@ def test_add_and_remove_high_digit_shifts_existing_digits(qtbot):
 
     widget.remove_high_digit()
     assert widget.text() == "1234.56"
+
+
+def test_digit_input_displays_thousands_separators_without_changing_value(qtbot):
+    price = DigitInput("price")
+    shares = DigitInput("shares")
+    qtbot.addWidget(price)
+    qtbot.addWidget(shares)
+
+    price.set_value("1234.56")
+    shares.set_value(32000)
+
+    assert price.text() == "1234.56"
+    assert price.value() == Decimal("1234.56")
+    assert [label.text() for label in price.findChildren(QLabel, "digit_thousands_separator")] == [","]
+    assert shares.text() == "32000"
+    assert shares.value() == 32000
+    assert [label.text() for label in shares.findChildren(QLabel, "digit_thousands_separator")] == [","]
+    assert len(price._buttons) == 6
+    assert len(shares._buttons) == 5
 
 
 def test_width_menu_delete_is_disabled_at_default_width(qtbot):

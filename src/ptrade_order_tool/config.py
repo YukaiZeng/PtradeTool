@@ -48,7 +48,12 @@ def load_config(user_data_dir: Path | None = None) -> AppConfig:
     config_path = get_config_path(user_data_dir)
     if not config_path.exists():
         return AppConfig()
-    data = json.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return AppConfig()
+    if not isinstance(data, dict):
+        return AppConfig()
     allowed = set(AppConfig.__dataclass_fields__)
     return AppConfig(**{key: value for key, value in data.items() if key in allowed})
 

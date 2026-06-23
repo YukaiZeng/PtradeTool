@@ -23,6 +23,18 @@ def test_config_round_trip(tmp_path):
     assert loaded == original
 
 
+def test_invalid_config_returns_defaults(tmp_path):
+    (tmp_path / "config.json").write_text("{broken", encoding="utf-8")
+
+    assert load_config(tmp_path) == AppConfig()
+
+
+def test_non_object_config_returns_defaults(tmp_path):
+    (tmp_path / "config.json").write_text("[]", encoding="utf-8")
+
+    assert load_config(tmp_path) == AppConfig()
+
+
 def test_get_executable_dir_uses_packaged_executable_parent(monkeypatch):
     executable = Path("dist") / "PtradeOrderTool" / "PtradeOrderTool.exe"
     monkeypatch.setattr(config_module.sys, "frozen", True, raising=False)

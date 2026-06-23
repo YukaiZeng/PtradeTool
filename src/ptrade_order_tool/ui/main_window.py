@@ -259,6 +259,8 @@ class MainWindow(QMainWindow):
         self._suppress_candidate_popup = False
         self._daily_quotes: dict[str, DailyQuote] = {}
         self._daily_quotes_date: str | None = None
+        self._order_input_widths_by_id: dict[int, tuple[int, int]] = {}
+        self._stock_cards_by_code: dict[str, StockCard] = {}
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -431,12 +433,11 @@ class MainWindow(QMainWindow):
             self.set_draft(draft, default_to_holding=True)
         else:
             self._render_empty_state()
-        self.refresh_trade_calendar(silent=True)
         self.refresh_stock_update_button()
         self.refresh_date_combo()
-        self._apply_clickable_cursors()
+        self._set_top_button_cursors()
         if auto_update_stock_basic:
-            self.start_stock_basic_update_if_needed()
+            QTimer.singleShot(0, self.start_stock_basic_update_if_needed)
 
     def _make_more_action(self, text: str, handler) -> QAction:
         action = QAction(text, self)
@@ -465,9 +466,24 @@ class MainWindow(QMainWindow):
         widget.style().unpolish(widget)
         widget.style().polish(widget)
 
-    def _apply_clickable_cursors(self) -> None:
-        for button in self.findChildren(QPushButton):
+    def _set_pointing_cursors(self, *buttons: QPushButton) -> None:
+        for button in buttons:
             button.setCursor(Qt.PointingHandCursor)
+
+    def _set_top_button_cursors(self) -> None:
+        self._set_pointing_cursors(
+            self.settings_button,
+            self.manual_import_button,
+            self.reimport_button,
+            self.stock_update_button,
+            self.add_stock_button,
+            self.open_export_dir_button,
+            self.check_export_button,
+            self.export_button,
+            self.undo_delete_button,
+            self.locate_unconfirmed_button,
+            self.more_button,
+        )
 
     def eventFilter(self, watched, event):  # noqa: N802
         if (
@@ -621,10 +637,10 @@ class MainWindow(QMainWindow):
         self.open_export_dir_action.setEnabled(bool(draft.export_json_path))
         self._refresh_locate_unconfirmed_button()
         self._refresh_check_export_button()
-        self._apply_clickable_cursors()
         self._schedule_daily_quotes_update(draft)
 
     def _render_empty_state(self) -> None:
+        self._stock_cards_by_code = {}
         self.opening_amount_label.setText("开仓金额 0.00")
         self.opening_amount_label.show()
         self.draft_summary_label.setText("股票 -- | 待确认 --")
@@ -637,13 +653,18 @@ class MainWindow(QMainWindow):
         self.stock_layout.addStretch(1)
 
     def _render_stock_cards_or_empty(self, draft: SessionDraft) -> None:
+        self._remember_order_input_widths()
+        self._stock_cards_by_code = {}
         self._clear_layout(self.stock_layout)
         if draft.stocks:
             for stock in draft.stocks:
-                self.stock_layout.addWidget(self._make_stock_card(stock))
+                card = self._make_stock_card(stock)
+                self._stock_cards_by_code[stock.ts_code] = card
+                self.stock_layout.addWidget(card)
         else:
             self.stock_layout.addWidget(self._make_empty_state_label(read_only=draft.read_only))
         self.stock_layout.addStretch(1)
+        self._prune_order_input_widths(draft)
 
     def _make_empty_state_label(self, *, read_only: bool) -> QLabel:
         text = "历史日期无本地数据。" if read_only else "未导入盘后 JSON，也可以直接添加股票并编辑开仓交易单。"
@@ -739,7 +760,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "stock_content"):
             return
         filter_index = self.tabs.currentIndex()
-        for card in self.stock_content.findChildren(StockCard):
+        for card in self._stock_cards_by_code.values():
             if filter_index == 1:
                 card.setVisible(not card.stock.is_holding)
             elif filter_index == 2:
@@ -761,13 +782,9 @@ class MainWindow(QMainWindow):
     def _visible_stock_cards_in_order(self) -> list[StockCard]:
         if not self.draft:
             return []
-        cards_by_code = {
-            card.stock.ts_code: card
-            for card in self.stock_content.findChildren(StockCard)
-        }
         cards = []
         for stock in self.draft.stocks:
-            card = cards_by_code.get(stock.ts_code)
+            card = self._stock_cards_by_code.get(stock.ts_code)
             if card is not None and not card.isHidden():
                 cards.append(card)
         return cards
@@ -776,10 +793,7 @@ class MainWindow(QMainWindow):
         ts_code = self.stock_jump_combo.itemData(index, Qt.UserRole)
         if not ts_code:
             return
-        card = next(
-            (card for card in self.stock_content.findChildren(StockCard) if card.stock.ts_code == ts_code),
-            None,
-        )
+        card = self._stock_cards_by_code.get(str(ts_code))
         if card:
             self.stock_scroll.ensureWidgetVisible(card)
             self.status_label.setText(f"已定位: {card.stock.ts_code} {card.stock.stock_name}")
@@ -809,7 +823,36 @@ class MainWindow(QMainWindow):
         card.orderTypeChanged.connect(self._handle_order_type_change)
         card.addOrderRequested.connect(self._handle_add_order)
         card.deleteStockRequested.connect(self._handle_stock_delete)
+        self._restore_order_input_widths(card)
         return card
+
+    def _remember_order_input_widths(self) -> None:
+        for row in self.stock_content.findChildren(OrderRow):
+            if row.order.id is None:
+                continue
+            self._order_input_widths_by_id[row.order.id] = (
+                row.price_input.integer_width(),
+                row.shares_input.integer_width(),
+            )
+
+    def _restore_order_input_widths(self, card: StockCard) -> None:
+        for row in card.findChildren(OrderRow):
+            if row.order.id is None:
+                continue
+            widths = self._order_input_widths_by_id.get(row.order.id)
+            if widths is None:
+                continue
+            price_width, shares_width = widths
+            row.price_input.set_integer_width(price_width)
+            row.shares_input.set_integer_width(shares_width)
+
+    def _prune_order_input_widths(self, draft: SessionDraft) -> None:
+        current_order_ids = {order.id for stock in draft.stocks for order in stock.orders if order.id is not None}
+        self._order_input_widths_by_id = {
+            order_id: widths
+            for order_id, widths in self._order_input_widths_by_id.items()
+            if order_id in current_order_ids
+        }
 
     def _schedule_daily_quotes_update(self, draft: SessionDraft) -> None:
         manage_date = draft.manage_date
@@ -876,9 +919,10 @@ class MainWindow(QMainWindow):
             self._daily_quotes = {}
         self._daily_quotes.update(quotes)
         self._daily_quotes_date = manage_date
-        for card in self.stock_content.findChildren(StockCard):
-            if card.stock.ts_code in quotes:
-                card.set_daily_quote(quotes[card.stock.ts_code])
+        for ts_code, quote in quotes.items():
+            card = self._stock_cards_by_code.get(ts_code)
+            if card:
+                card.set_daily_quote(quote)
 
     def _handle_daily_quotes_worker_finished(self) -> None:
         worker = self.sender()
@@ -1185,6 +1229,9 @@ class MainWindow(QMainWindow):
         selected_label = self._stock_label(self._selected_stock_candidate) if self._selected_stock_candidate else ""
         if selected_label and self._normalize_stock_text(selected_label) == text:
             return self._selected_stock_candidate
+        for label, stock in self._stock_candidate_by_label.items():
+            if self._normalize_stock_text(label) == text:
+                return stock
         parts = text.split()
         if len(parts) >= 2:
             code_text = parts[0]
@@ -1371,10 +1418,7 @@ class MainWindow(QMainWindow):
             self._refresh_locate_unconfirmed_button()
             return
         self.tabs.setCurrentIndex(0)
-        card = next(
-            (card for card in self.stock_content.findChildren(StockCard) if card.stock.ts_code == stock.ts_code),
-            None,
-        )
+        card = self._stock_cards_by_code.get(stock.ts_code)
         if card:
             self.stock_scroll.ensureWidgetVisible(card)
         self.status_label.setText(f"已定位需处理: {stock.ts_code} {stock.stock_name}")
@@ -1447,6 +1491,7 @@ class MainWindow(QMainWindow):
         cancel_button = QPushButton("取消")
         delete_button = QPushButton("删除")
         delete_button.setObjectName("delete_history_confirm_button")
+        self._set_pointing_cursors(cancel_button, delete_button)
         cancel_button.clicked.connect(dialog.reject)
         delete_button.clicked.connect(dialog.accept)
         buttons.addStretch(1)
@@ -1500,6 +1545,7 @@ class MainWindow(QMainWindow):
         buttons = QHBoxLayout()
         locate_button = QPushButton("定位")
         close_button = QPushButton("关闭")
+        self._set_pointing_cursors(locate_button, close_button)
         locate_button.setEnabled(self._first_attention_stock() is not None)
         locate_button.clicked.connect(lambda: (dialog.accept(), self._handle_locate_unconfirmed()))
         close_button.clicked.connect(dialog.accept)

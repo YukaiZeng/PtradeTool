@@ -201,6 +201,7 @@ class StockCard(QFrame):
         self.delete_stock_button.setProperty("role", "delete_stock")
         self.delete_stock_button.setEnabled(not read_only)
         self.delete_stock_button.setFixedWidth(44)
+        self.delete_stock_button.setCursor(Qt.PointingHandCursor)
         self.delete_stock_button.clicked.connect(lambda: self.deleteStockRequested.emit(self.stock))
         header_layout.addWidget(self.delete_stock_button)
 
@@ -259,6 +260,7 @@ class StockCard(QFrame):
             add_button.setEnabled(not read_only)
             add_button.setToolTip(f"新增{compact_label}订单")
             add_button.setFixedSize(18, 18)
+            add_button.setCursor(Qt.PointingHandCursor)
             add_button.clicked.connect(lambda checked=False, value=order_type: self.addOrderRequested.emit(self.stock, value))
             title_wrap_layout.addWidget(title_label)
             title_wrap_layout.addWidget(add_button)
@@ -328,9 +330,9 @@ class StockCard(QFrame):
         loss_total = sum(order.shares for order in grouped.get("sell_loss", []))
         warnings = []
         if profit_total and profit_total != holding_amount:
-            warnings.append(f"止盈合计 {profit_total}，不等于持仓 {holding_amount}")
+            warnings.append(f"止盈合计 {profit_total:,}，不等于持仓 {holding_amount:,}")
         if loss_total and loss_total != holding_amount:
-            warnings.append(f"止损合计 {loss_total}，不等于持仓 {holding_amount}")
+            warnings.append(f"止损合计 {loss_total:,}，不等于持仓 {holding_amount:,}")
         return warnings
 
     def _refresh_dynamic_style(self, widget: QWidget) -> None:
@@ -359,4 +361,6 @@ def _format_amount_yi(amount: Decimal) -> str:
 def _format_metric_value(label: str, value: object) -> str:
     if label in {"市值", "盈亏"}:
         return f"{Decimal(str(value)):,.2f}"
+    if label == "持仓":
+        return f"{int(value):,}"
     return str(value)

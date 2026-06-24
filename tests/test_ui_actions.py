@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox
@@ -579,7 +580,7 @@ def test_open_export_dir_button_opens_configured_directory(qtbot, sqlite_conn, t
 
     window.open_export_dir_action.trigger()
 
-    assert opened == [str(order_dir)]
+    assert [Path(path) for path in opened] == [order_dir]
     assert window.status_label.text().startswith("已打开导出目录:")
     assert window.status_label.toolTip() == f"已打开导出目录: {order_dir}"
 

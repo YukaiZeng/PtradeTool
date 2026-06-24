@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QMenu, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from ptrade_order_tool.models import OrderDraft
 from ptrade_order_tool.ui.digit_input import DigitInput
@@ -110,20 +110,20 @@ def test_keyboard_cursor_is_visible_and_moves_after_input(qtbot):
     assert widget._buttons[1].property("digitCursor") is True
 
 
-def test_digit_menu_opens_aligned_below_clicked_digit(qtbot, monkeypatch):
+def test_digit_menu_opens_centered_below_clicked_digit(qtbot):
     widget = DigitInput("price")
     qtbot.addWidget(widget)
+    widget.show()
     button = widget._buttons[1]
-    menu = QMenu(button)
-    menu.addAction("0")
 
     widget.set_cursor_index(1)
-    expected = button.mapToGlobal(button.rect().topLeft())
-    expected.setX(expected.x() + button.width() // 2 - menu.sizeHint().width() // 2)
-    expected.setY(expected.y() + button.height())
+    widget.show_digit_menu()
+    menu = widget._active_menu
 
+    assert menu is not None
     assert widget._buttons[1].property("digitCursor") is True
-    assert button._digit_menu_pos(menu) == expected
+    assert menu.geometry().center().x() == button.mapToGlobal(button.rect().center()).x()
+    assert abs(menu.y() - button.mapToGlobal(button.rect().bottomLeft()).y()) <= 1
 
 
 def test_cursor_is_cleared_when_clicking_outside_digit_input(qtbot):

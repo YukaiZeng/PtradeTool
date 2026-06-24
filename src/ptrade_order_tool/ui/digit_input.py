@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Callable
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QKeyEvent, QWheelEvent
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton, QWidget
 
 
 class DigitButton(QPushButton):
@@ -48,6 +49,58 @@ class DigitButton(QPushButton):
         event.ignore()
 
 
+class DigitPopup(QListWidget):
+    digitSelected = Signal(str)
+    dismissed = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("digit_popup")
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setMouseTracking(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFixedWidth(42)
+        self._row_height = 28
+        for digit in "0123456789":
+            item = QListWidgetItem(digit)
+            item.setTextAlignment(Qt.AlignCenter)
+            item.setSizeHint(QSize(self.width(), self._row_height))
+            self.addItem(item)
+        self.setFixedHeight(self.count() * self._row_height + 2)
+        self.setCurrentRow(0)
+        self.itemClicked.connect(lambda item: self.digitSelected.emit(item.text()))
+
+    def popup_at_digit(self, button: DigitButton) -> None:
+        center = button.mapToGlobal(QPoint(button.width() // 2, button.height()))
+        self.move(center.x() - self.width() // 2, center.y())
+        self.show()
+        self.raise_()
+
+    def set_highlight_index(self, index: int) -> None:
+        self.setCurrentRow(max(0, min(index, self.count() - 1)))
+
+    def highlighted_digit(self) -> str:
+        item = self.currentItem()
+        return item.text() if item else "0"
+
+    def hideEvent(self, event):  # noqa: N802
+        super().hideEvent(event)
+        self.dismissed.emit(self)
+
+
+class DigitMenuAction:
+    def __init__(self, digit: str, callback: Callable[[str], None]) -> None:
+        self._digit = digit
+        self._callback = callback
+
+    def text(self) -> str:
+        return self._digit
+
+    def trigger(self) -> None:
+        self._callback(self._digit)
+
+
 class DigitInput(QWidget):
     valueChanged = Signal()
     boundaryNavigateRequested = Signal(str)
@@ -67,8 +120,8 @@ class DigitInput(QWidget):
         self._cursor_visible = False
         self._cursor_at_end = False
         self._event_filter_installed = False
-        self._active_menu: QMenu | None = None
-        self._active_menu_actions: list[QAction] = []
+        self._active_menu: QWidget | None = None
+        self._active_menu_actions: list[DigitMenuAction] = []
         self._menu_highlight_index = 0
         self._buttons: list[DigitButton] = []
         self._separator_width = 8
@@ -204,7 +257,7 @@ class DigitInput(QWidget):
         self._remove_cursor_event_filter()
         self._update_cursor_style()
 
-    def set_active_menu(self, menu: QMenu | None) -> None:
+    def set_active_menu(self, menu: QWidget | None) -> None:
         self._active_menu = menu
 
     def show_digit_menu(self) -> None:
@@ -214,23 +267,19 @@ class DigitInput(QWidget):
         button = self._button_for_cursor()
         if button is None:
             return
-        menu = QMenu(button)
-        actions: list[QAction] = []
-        for digit in "0123456789":
-            action = QAction(digit, menu)
-            action.triggered.connect(lambda checked=False, value=digit: self._apply_menu_digit(value))
-            menu.addAction(action)
-            actions.append(action)
+        menu = DigitPopup(self)
+        menu.digitSelected.connect(self._apply_menu_digit)
+        actions = [DigitMenuAction(digit, self._apply_menu_digit) for digit in "0123456789"]
         self._active_menu_actions = actions
         self._menu_highlight_index = 0
         self.set_active_menu(menu)
-        menu.aboutToHide.connect(lambda: self._clear_active_menu(menu))
-        menu.popup(button._digit_menu_pos(menu))
-        menu.setActiveAction(actions[0])
+        menu.dismissed.connect(self._clear_active_menu)
+        menu.popup_at_digit(button)
+        menu.set_highlight_index(0)
 
     def hide_digit_menu(self) -> None:
         if self._active_menu:
-            self._active_menu.hide()
+            self._active_menu.close()
             self._clear_active_menu(self._active_menu)
 
     def move_to_first_digit(self) -> None:
@@ -315,7 +364,7 @@ class DigitInput(QWidget):
             event.accept()
             return True
         if event.key() in {Qt.Key_Return, Qt.Key_Enter} and self._active_menu and self._active_menu_actions:
-            self._apply_menu_digit(self._active_menu_actions[self._menu_highlight_index].text())
+            self._active_menu_actions[self._menu_highlight_index].trigger()
             event.accept()
             return True
         if event.key() in {Qt.Key_Backspace, Qt.Key_Delete}:
@@ -412,9 +461,10 @@ class DigitInput(QWidget):
         if not self._active_menu_actions:
             return
         self._menu_highlight_index = max(0, min(index, len(self._active_menu_actions) - 1))
-        self._active_menu.setActiveAction(self._active_menu_actions[self._menu_highlight_index])
+        if isinstance(self._active_menu, DigitPopup):
+            self._active_menu.set_highlight_index(self._menu_highlight_index)
 
-    def _clear_active_menu(self, menu: QMenu) -> None:
+    def _clear_active_menu(self, menu: QWidget) -> None:
         if self._active_menu is not menu:
             return
         self._active_menu = None

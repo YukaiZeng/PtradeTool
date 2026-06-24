@@ -202,6 +202,17 @@ def test_stock_filter_tabs_reuse_single_card_set(qtbot, sqlite_conn):
     assert all(not card.isHidden() for card in cards)
 
 
+def test_stock_filter_tabs_fit_text_without_clipping(qtbot, sqlite_conn):
+    draft = make_fixture_draft(sqlite_conn)
+    window = MainWindow(draft)
+    qtbot.addWidget(window)
+
+    for index in range(3):
+        text = window.tabs.tabText(index)
+        button = window.tabs._buttons[index]
+        assert button.width() >= button.fontMetrics().horizontalAdvance(text) + 24
+
+
 def test_stock_card_uses_vertical_order_sections_with_add_button_in_header(qtbot):
     stock = StockDraft(
         ts_code="600000.SH",

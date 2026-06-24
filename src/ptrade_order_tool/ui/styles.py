@@ -210,6 +210,8 @@ QComboBox QAbstractItemView,
 QListWidget#stock_candidate_popup {
     background: #ffffff;
     border: 1px solid #cfd6e3;
+    border-radius: 6px;
+    outline: 0;
     selection-background-color: #eaf3ff;
     selection-color: #172033;
 }
@@ -221,7 +223,9 @@ QListWidget#stock_candidate_popup::item {
 }
 
 QComboBox QAbstractItemView::item:hover,
-QListWidget#stock_candidate_popup::item:hover {
+QComboBox QAbstractItemView::item:selected,
+QListWidget#stock_candidate_popup::item:hover,
+QListWidget#stock_candidate_popup::item:selected {
     background: #f3f8ff;
     color: #172033;
 }
@@ -232,9 +236,9 @@ QPushButton[role="filter_tab"] {
     border-radius: 6px;
     color: #667085;
     min-height: 30px;
-    min-width: 0;
-    max-width: 72px;
-    padding: 5px 9px;
+    max-height: 30px;
+    padding: 0;
+    text-align: center;
 }
 
 QPushButton[role="filter_tab"]:checked {
@@ -555,6 +559,26 @@ QLabel#digit_thousands_separator {
     font-size: 18px;
     font-weight: 800;
     padding-top: 8px;
+}
+
+QListWidget#digit_popup {
+    background: #ffffff;
+    border: 1px solid #cfd6e3;
+    border-radius: 6px;
+    outline: 0;
+    padding: 1px;
+}
+
+QListWidget#digit_popup::item {
+    color: #172033;
+    min-height: 28px;
+    padding: 0;
+}
+
+QListWidget#digit_popup::item:hover,
+QListWidget#digit_popup::item:selected {
+    background: #eaf3ff;
+    color: #172033;
 }
 
 QLabel#empty_order_label {

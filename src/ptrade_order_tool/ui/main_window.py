@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -52,6 +52,13 @@ class RightCheckDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):  # noqa: N802
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+        selected = bool(option.state & QStyle.State_Selected)
+        if hovered or selected:
+            painter.save()
+            painter.fillRect(option.rect.adjusted(2, 1, -2, -1), QColor("#eaf3ff" if selected else "#f3f8ff"))
+            painter.restore()
+            opt.state &= ~QStyle.State_Selected
         opt.text = ""
         opt.features &= ~QStyleOptionViewItem.HasCheckIndicator
         QApplication.style().drawControl(QStyle.CE_ItemViewItem, opt, painter)
@@ -66,6 +73,8 @@ class AutoWidthComboBox(QComboBox):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setItemDelegate(RightCheckDelegate(self))
+        self.view().setMouseTracking(True)
+        self.view().setAttribute(Qt.WA_Hover, True)
 
     def showPopup(self):  # noqa: N802
         width = self.width()
@@ -145,7 +154,7 @@ class StockFilterTabs(QWidget):
             button = QPushButton("")
             button.setCheckable(True)
             button.setProperty("role", "filter_tab")
-            button.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             self._buttons.append(button)
             self._group.addButton(button, index)
             layout.addWidget(button)
@@ -159,6 +168,7 @@ class StockFilterTabs(QWidget):
 
     def setTabText(self, index: int, text: str) -> None:  # noqa: N802
         self._buttons[index].setText(text)
+        self._refresh_button_widths()
 
     def tabText(self, index: int) -> str:  # noqa: N802
         return self._buttons[index].text()
@@ -174,6 +184,14 @@ class StockFilterTabs(QWidget):
         self._buttons[index].setChecked(True)
         if changed:
             self.currentChanged.emit(index)
+
+    def _refresh_button_widths(self) -> None:
+        if not self._buttons:
+            return
+        metrics = self.fontMetrics()
+        width = max(78, max(metrics.horizontalAdvance(button.text()) for button in self._buttons) + 30)
+        for button in self._buttons:
+            button.setFixedWidth(width)
 
 
 class StockUpdateWorker(QThread):
@@ -318,6 +336,7 @@ class MainWindow(QMainWindow):
         self.stock_candidate_popup.setObjectName("stock_candidate_popup")
         self.stock_candidate_popup.setFocusPolicy(Qt.NoFocus)
         self.stock_candidate_popup.setMouseTracking(True)
+        self.stock_candidate_popup.setAttribute(Qt.WA_Hover, True)
         self.stock_candidate_popup.hide()
         app = QApplication.instance()
         if app is not None:
@@ -455,6 +474,20 @@ class MainWindow(QMainWindow):
         height = available.height()
         self.resize(width, height)
         self.move(available.right() - width + 1, available.y())
+        QTimer.singleShot(0, self._align_to_available_screen_edge)
+
+    def _align_to_available_screen_edge(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if not screen:
+            return
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        target_x = available.right() - frame.width() + 1
+        target_y = available.top()
+        self.move(target_x + (self.pos().x() - frame.x()), target_y + (self.pos().y() - frame.y()))
+        content_height_delta = available.bottom() - self.frameGeometry().bottom()
+        if content_height_delta:
+            self.resize(self.width(), max(self.minimumHeight(), self.height() + content_height_delta))
 
     def _make_action_separator(self) -> QLabel:
         separator = QLabel("|")

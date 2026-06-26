@@ -70,10 +70,10 @@ class DraftStore:
                         holding.stock_name,
                         order["order_type"],
                         Decimal(str(order["price"])),
-                        holding.current_amount,
+                        int(order["shares"]),
                         confirmed=False,
                         source="inherited",
-                        warning="数量已按当前持仓调整，需确认",
+                        warning="继承上一交易日订单，需确认",
                     )
             self.conn.commit()
         except Exception:

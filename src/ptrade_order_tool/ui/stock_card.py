@@ -38,7 +38,6 @@ class EmbeddedOrderGroup(QGroupBox):
     def set_embedded_header(self, header: QWidget) -> None:
         self._embedded_header = header
         header.setParent(self)
-        header.show()
         header.raise_()
         self._position_embedded_header()
 
@@ -61,6 +60,12 @@ class EmbeddedOrderGroup(QGroupBox):
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
         self._position_embedded_header()
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        if self._embedded_header is not None:
+            self._embedded_header.show()
+            self._position_embedded_header()
 
     def _position_embedded_header(self) -> None:
         if self._embedded_header is None:
@@ -323,16 +328,28 @@ class StockCard(QFrame):
         self._refresh_dynamic_style(self.daily_kline)
 
     def _warning_texts(self, grouped: dict[str, list[OrderDraft]]) -> list[str]:
-        if not self.stock.holding:
-            return []
-        holding_amount = self.stock.holding.current_amount
+        buy_total = sum(order.shares for order in grouped.get("buy_stop", []))
+        buy_total += sum(order.shares for order in grouped.get("buy_limit", []))
         profit_total = sum(order.shares for order in grouped.get("sell_profit", []))
         loss_total = sum(order.shares for order in grouped.get("sell_loss", []))
         warnings = []
-        if profit_total and profit_total != holding_amount:
-            warnings.append(f"止盈合计 {profit_total:,}，不等于持仓 {holding_amount:,}")
-        if loss_total and loss_total != holding_amount:
-            warnings.append(f"止损合计 {loss_total:,}，不等于持仓 {holding_amount:,}")
+        if self.stock.holding:
+            holding_amount = self.stock.holding.current_amount
+            if profit_total != holding_amount:
+                warnings.append(f"止盈合计 {profit_total:,}，不等于持仓 {holding_amount:,}")
+            if loss_total != holding_amount:
+                warnings.append(f"止损合计 {loss_total:,}，不等于持仓 {holding_amount:,}")
+        else:
+            if buy_total == 0 and (profit_total or loss_total):
+                warnings.append("无买单，但存在卖单计划")
+            if (buy_total or profit_total) and profit_total != buy_total:
+                warnings.append(f"止盈合计 {profit_total:,}，不等于买单合计 {buy_total:,}")
+            if (buy_total or loss_total) and loss_total != buy_total:
+                warnings.append(f"止损合计 {loss_total:,}，不等于买单合计 {buy_total:,}")
+        for profit_order in grouped.get("sell_profit", []):
+            for loss_order in grouped.get("sell_loss", []):
+                if profit_order.price < loss_order.price:
+                    warnings.append(f"止盈价格 {profit_order.price:.2f} 小于止损价格 {loss_order.price:.2f}")
         return warnings
 
     def _refresh_dynamic_style(self, widget: QWidget) -> None:

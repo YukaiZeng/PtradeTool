@@ -38,7 +38,7 @@ def test_create_draft_imports_holdings_and_inherits_only_sell_orders(sqlite_conn
     assert all(order.order_type != "buy_limit" for order in shiji.orders)
 
 
-def test_inherited_sell_orders_use_current_holding_amount(sqlite_conn, tmp_path):
+def test_inherited_sell_orders_keep_previous_order_shares(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
     previous_order_path = tmp_path / "20260224.json"
@@ -58,7 +58,10 @@ def test_inherited_sell_orders_use_current_holding_amount(sqlite_conn, tmp_path)
     guangxian = next(stock for stock in draft.stocks if stock.ts_code == "300251.SZ")
     assert guangxian.holding.current_amount == 200
     assert guangxian.holding.enable_amount == 0
-    assert [order.shares for order in guangxian.orders] == [200, 200]
+    assert [(order.price, order.shares) for order in guangxian.orders] == [
+        (Decimal("12.65"), 100),
+        (Decimal("10.99"), 100),
+    ]
 
 
 def test_create_draft_ignores_malformed_previous_order_json(sqlite_conn, tmp_path):

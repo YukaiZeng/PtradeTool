@@ -1,8 +1,8 @@
 from pathlib import Path
 from decimal import Decimal
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton, QWidget
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QPushButton, QWidget
 
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.draft_store import DraftStore
@@ -356,6 +356,34 @@ def test_stock_card_formats_holding_value_profit_and_daily_amount(qtbot):
     assert card.findChild(QLabel, "stock_daily_amount").text() == "2.50亿"
 
 
+def test_stock_card_shows_holding_warnings_without_condition_orders(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=True,
+        holding=type(
+            "Holding",
+            (),
+            {
+                "current_amount": 1200,
+                "enable_amount": 1200,
+                "market_value": Decimal("12345.67"),
+                "cost_price": Decimal("10.25"),
+                "income_balance": Decimal("0"),
+            },
+        )(),
+        orders=[],
+    )
+
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+
+    warnings = [label.text() for label in card.findChildren(QLabel, "stock_card_warning")]
+
+    assert "止盈合计 0，不等于持仓 1,200" in warnings
+    assert "止损合计 0，不等于持仓 1,200" in warnings
+
+
 def test_stock_card_daily_quote_zero_pct_uses_black_text_and_red_kline(qtbot):
     stock = StockDraft(ts_code="600000.SH", stock_name="浦发银行", is_holding=False, orders=[])
     quote = DailyQuote(
@@ -455,9 +483,39 @@ def test_main_window_empty_state(qtbot):
     assert window.minimumWidth() <= 640
     assert window.minimumHeight() <= 360
     assert window.width() == window.minimumWidth()
-    assert window.height() == available.height()
-    assert window.geometry().right() == available.right()
+    assert window.frameGeometry().height() == available.height()
+    assert window.frameGeometry().right() == available.right()
     assert window.findChild(type(window.account_bar), "top_tool_panel") is not None
+
+
+def test_main_window_geometry_is_stable_after_first_show(qtbot):
+    window = MainWindow(auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    before_show_geometry = window.geometry()
+
+    class WindowGeometryRecorder(QObject):
+        def __init__(self, target):
+            super().__init__()
+            self.target = target
+            self.visible_resize_or_move = []
+
+        def eventFilter(self, watched, event):  # noqa: N802
+            if watched is self.target and event.type() in {QEvent.Move, QEvent.Resize} and self.target.isVisible():
+                self.visible_resize_or_move.append((event.type(), self.target.geometry()))
+            return False
+
+    recorder = WindowGeometryRecorder(window)
+    app = QApplication.instance()
+    app.installEventFilter(recorder)
+    try:
+        window.show()
+        qtbot.waitExposed(window)
+        qtbot.wait(20)
+    finally:
+        app.removeEventFilter(recorder)
+
+    assert recorder.visible_resize_or_move == []
+    assert window.geometry() == before_show_geometry
 
 
 def test_date_combo_shows_weekday(qtbot, sqlite_conn):
@@ -706,6 +764,43 @@ def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
     row.shares_input.set_value(1500)
 
     assert row.amount_label.text() == "金额 18,975.00"
+
+
+def test_stock_card_shows_opening_and_price_warnings(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=False,
+        orders=[
+            OrderDraft("sell_profit", Decimal("10.00"), 500),
+            OrderDraft("sell_loss", Decimal("11.00"), 500),
+        ],
+    )
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+
+    warnings = [label.text() for label in card.findChildren(QLabel, "stock_card_warning")]
+
+    assert "无买单，但存在卖单计划" in warnings
+    assert "止盈合计 500，不等于买单合计 0" in warnings
+    assert "止损合计 500，不等于买单合计 0" in warnings
+    assert "止盈价格 10.00 小于止损价格 11.00" in warnings
+
+
+def test_stock_card_shows_opening_warnings_without_sell_orders(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=False,
+        orders=[OrderDraft("buy_stop", Decimal("10.00"), 1000)],
+    )
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+
+    warnings = [label.text() for label in card.findChildren(QLabel, "stock_card_warning")]
+
+    assert "止盈合计 0，不等于买单合计 1,000" in warnings
+    assert "止损合计 0，不等于买单合计 1,000" in warnings
 
 
 def test_buy_orders_show_amount_and_cash_summary(qtbot, sqlite_conn):

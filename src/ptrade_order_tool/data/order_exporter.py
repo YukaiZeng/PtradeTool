@@ -104,11 +104,11 @@ def _validate_opening_totals(
 
     if buy_total == 0 and (profit_total or loss_total):
         validation.warnings.append(f"{stock.ts_code} {stock.stock_name} 无买单但存在卖单计划")
-    if profit_total and profit_total != buy_total:
+    if (buy_total or profit_total) and profit_total != buy_total:
         validation.warnings.append(
             f"{stock.ts_code} {stock.stock_name} 止盈合计 {_format_shares(profit_total)} 不等于买单合计 {_format_shares(buy_total)}"
         )
-    if loss_total and loss_total != buy_total:
+    if (buy_total or loss_total) and loss_total != buy_total:
         validation.warnings.append(
             f"{stock.ts_code} {stock.stock_name} 止损合计 {_format_shares(loss_total)} 不等于买单合计 {_format_shares(buy_total)}"
         )

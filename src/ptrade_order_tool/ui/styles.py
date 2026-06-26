@@ -114,17 +114,6 @@ QPushButton#check_export_button[tone="blocker"]:hover {
     border-color: #fb7185;
 }
 
-QPushButton#check_export_button[tone="warning"] {
-    background: #eff6ff;
-    border-color: #93c5fd;
-    color: #1d4ed8;
-}
-
-QPushButton#check_export_button[tone="warning"]:hover {
-    background: #dbeafe;
-    border-color: #60a5fa;
-}
-
 QPushButton#check_export_button[tone="pending"] {
     background: #fff7ed;
     border-color: #fdba74;
@@ -404,18 +393,6 @@ QWidget#order_row {
     border-left: 4px solid #94a3b8;
 }
 
-QWidget#order_row[side="buy"] {
-    border-left: 4px solid #2563eb;
-}
-
-QWidget#order_row[side="sell_profit"] {
-    border-left: 4px solid #d40000;
-}
-
-QWidget#order_row[side="sell_loss"] {
-    border-left: 4px solid #008f39;
-}
-
 QComboBox#order_type_combo {
     font-weight: 700;
 }
@@ -441,25 +418,19 @@ QLabel#order_status_indicator[status="pending"] {
     border: 1px solid #fed7aa;
 }
 
-QLabel#order_status_indicator[status="inherited"] {
-    background: #2563eb;
-}
-
 QLabel#order_status_indicator[status="confirmed"] {
     background: #ecfdf3;
     border: 1px solid #bbf7d0;
 }
 
-QPushButton#order_confirm_button[status="pending"],
-QPushButton#order_confirm_button[status="inherited"] {
+QPushButton#order_confirm_button[status="pending"] {
     background: #172033;
     border-color: #172033;
     color: #ffffff;
     font-weight: 800;
 }
 
-QPushButton#order_confirm_button[status="pending"]:hover,
-QPushButton#order_confirm_button[status="inherited"]:hover {
+QPushButton#order_confirm_button[status="pending"]:hover {
     background: #26344d;
     border-color: #26344d;
 }
@@ -608,11 +579,6 @@ QWidget#export_check_section {
 QWidget#export_check_section[tone="blocker"] {
     background: #fff1f2;
     border-color: #fecdd3;
-}
-
-QWidget#export_check_section[tone="warning"] {
-    background: #eff6ff;
-    border-color: #bfdbfe;
 }
 
 QWidget#export_check_section[tone="pending"] {

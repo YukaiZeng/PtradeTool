@@ -1,8 +1,8 @@
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox, QWidget
 
 from ptrade_order_tool.ui.main_window import MainWindow, StatusLabel
 from ptrade_order_tool.ui.order_row import OrderRow
@@ -79,6 +79,80 @@ def test_add_order_button_creates_unconfirmed_order(qtbot, sqlite_conn, tmp_path
     ]
     assert any(order.order_type == "buy_limit" and not order.confirmed for order in orders)
     assert "已新增订单" in window.status_label.text()
+
+
+def test_order_add_confirm_delete_refreshes_only_affected_card(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    untouched_card = window._stock_cards_by_code["300162.SZ"]
+    full_render_calls = []
+    monkeypatch.setattr(window, "_render_stock_cards_or_empty", lambda draft: full_render_calls.append(draft))
+
+    qtbot.mouseClick(window.findChild(type(window.export_button), "add_order_buy_limit_002153.SZ"), Qt.LeftButton)
+    row = next(row for row in window.findChildren(OrderRow) if row.order.order_type == "buy_limit")
+    order_id = row.order.id
+    row.price_input.set_cursor_index(0)
+    row.price_input.show_digit_menu()
+    popup = row.price_input._active_menu
+
+    qtbot.mouseClick(row.confirm_button, Qt.LeftButton)
+    confirmed_row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+    qtbot.mouseClick(confirmed_row.delete_button, Qt.LeftButton)
+
+    assert full_render_calls == []
+    assert window._stock_cards_by_code["300162.SZ"] is untouched_card
+    assert popup is not None and not popup.isVisible()
+
+
+def test_order_actions_do_not_show_transient_top_level_widgets(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    class TopLevelShowRecorder(QObject):
+        def __init__(self, allowed):
+            super().__init__()
+            self.allowed = set(allowed)
+            self.shown = []
+            self.parentless_windows = []
+
+        def eventFilter(self, watched, event):  # noqa: N802
+            if (
+                event.type() == QEvent.Show
+                and isinstance(watched, QWidget)
+                and watched.isWindow()
+                and watched not in self.allowed
+            ):
+                self.shown.append(watched.objectName() or watched.__class__.__name__)
+            if (
+                event.type() in {QEvent.ParentChange, QEvent.WinIdChange}
+                and isinstance(watched, QWidget)
+                and watched.isWindow()
+                and watched.parentWidget() is None
+                and watched not in self.allowed
+            ):
+                self.parentless_windows.append(watched.objectName() or watched.__class__.__name__)
+            return False
+
+    app = QApplication.instance()
+    recorder = TopLevelShowRecorder({window})
+    app.installEventFilter(recorder)
+    try:
+        qtbot.mouseClick(window.findChild(type(window.export_button), "add_order_buy_limit_002153.SZ"), Qt.LeftButton)
+        row = next(row for row in window.findChildren(OrderRow) if row.order.order_type == "buy_limit")
+        order_id = row.order.id
+        qtbot.mouseClick(row.confirm_button, Qt.LeftButton)
+        confirmed_row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+        qtbot.mouseClick(confirmed_row.delete_button, Qt.LeftButton)
+        qtbot.wait(10)
+    finally:
+        app.removeEventFilter(recorder)
+
+    assert recorder.shown == []
+    assert recorder.parentless_windows == []
 
 
 def test_locate_unconfirmed_button_jumps_to_first_pending_order(qtbot, sqlite_conn, tmp_path):
@@ -160,20 +234,24 @@ def test_clickable_buttons_use_pointing_hand_cursor(qtbot, sqlite_conn, tmp_path
 def test_state_buttons_have_explicit_hover_styles():
     assert 'QPushButton#locate_unconfirmed_button:enabled:hover' in APP_STYLESHEET
     assert 'QPushButton#check_export_button[tone="blocker"]:hover' in APP_STYLESHEET
-    assert 'QPushButton#check_export_button[tone="warning"]:hover' in APP_STYLESHEET
     assert 'QPushButton#check_export_button[tone="pending"]:hover' in APP_STYLESHEET
     assert 'QPushButton#order_confirm_button[status="pending"]:hover' in APP_STYLESHEET
     assert 'QPushButton#order_confirm_button[status="confirmed"]:hover' in APP_STYLESHEET
+    assert 'status="inherited"' not in APP_STYLESHEET
 
 
-def test_pending_and_warning_check_colors_are_swapped():
+def test_pending_check_color_is_orange():
     assert 'QPushButton#check_export_button[tone="pending"] {\n    background: #fff7ed;' in APP_STYLESHEET
-    assert 'QPushButton#check_export_button[tone="warning"] {\n    background: #eff6ff;' in APP_STYLESHEET
     assert 'QWidget#export_check_section[tone="pending"] {\n    background: #fff7ed;' in APP_STYLESHEET
-    assert 'QWidget#export_check_section[tone="warning"] {\n    background: #eff6ff;' in APP_STYLESHEET
 
 
-def test_stock_card_warning_uses_check_warning_colors():
+def test_order_row_leading_bar_stays_neutral():
+    assert 'QWidget#order_row[side="buy"]' not in APP_STYLESHEET
+    assert 'QWidget#order_row[side="sell_profit"]' not in APP_STYLESHEET
+    assert 'QWidget#order_row[side="sell_loss"]' not in APP_STYLESHEET
+
+
+def test_stock_card_warning_uses_blue_colors():
     assert 'QWidget#stock_card_warning_box {\n    background: #eff6ff;' in APP_STYLESHEET
     assert 'border: 1px solid #bfdbfe;' in APP_STYLESHEET
     assert 'QLabel#stock_card_warning {\n    color: #1d4ed8;' in APP_STYLESHEET
@@ -620,35 +698,37 @@ def test_export_button_shows_structured_blockers(qtbot, sqlite_conn, tmp_path, m
 def test_check_export_button_reports_pending_and_blockers(qtbot, sqlite_conn, tmp_path, monkeypatch):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    blocker_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("0"), 100)
+    service.update_and_confirm_order(blocker_id, price=Decimal("0"), shares=100, order_type="sell_loss")
     window = MainWindow(service.load_draft("20260225"), service)
     qtbot.addWidget(window)
     captured = []
     monkeypatch.setattr(
         window,
         "_show_export_check_dialog",
-        lambda pending, blockers, warnings: captured.append((pending, blockers, warnings)),
+        lambda pending, blockers: captured.append((pending, blockers)),
     )
 
     qtbot.mouseClick(window.check_export_button, Qt.LeftButton)
 
     assert captured
-    pending, blockers, warnings = captured[0]
+    pending, blockers = captured[0]
     assert pending == ["002153.SZ 石基信息 待确认 1 条"]
-    assert blockers == ["002153.SZ 石基信息 存在未确认订单"]
-    assert warnings == []
-    assert "导出检查: 1 个阻断项" in window.status_label.text()
+    assert blockers == ["002153.SZ 石基信息 订单价格必须大于0"]
+    assert "导出前检查: 1 个阻断项，1 个待确认项" in window.status_label.text()
     assert window.check_export_button.property("tone") == "blocker"
+    assert window.check_export_button.toolTip() == "1 个阻断项，1 个待确认项"
     assert window.export_button.isEnabled() is False
 
 
-def test_check_export_button_uses_blocker_tone_when_pending_orders_block_export(qtbot, sqlite_conn, tmp_path):
+def test_check_export_button_uses_pending_tone_when_only_pending_blocks_export(qtbot, sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)
     window = MainWindow(service.load_draft("20260225"), service)
     qtbot.addWidget(window)
 
-    assert window.check_export_button.property("tone") == "blocker"
-    assert window.check_export_button.toolTip() == "阻断项 1 个"
+    assert window.check_export_button.property("tone") == "pending"
+    assert window.check_export_button.toolTip() == "1 个待确认项"
 
 
 def test_export_check_dialog_section_order(qtbot, sqlite_conn, tmp_path, monkeypatch):
@@ -672,12 +752,21 @@ def test_export_check_dialog_section_order(qtbot, sqlite_conn, tmp_path, monkeyp
 
     monkeypatch.setattr("ptrade_order_tool.ui.main_window.QDialog", FakeDialog)
 
-    window._show_export_check_dialog(["pending"], ["blocker"], ["warning"])
+    window._show_export_check_dialog(["pending"], ["blocker"])
 
-    assert sections == [("阻断项", "blocker"), ("待确认", "pending"), ("提醒项", "warning")]
+    assert sections == [("阻断项", "blocker"), ("待确认", "pending")]
 
 
-def test_check_export_button_reports_warnings_without_blockers(qtbot, sqlite_conn, tmp_path, monkeypatch):
+def test_export_check_summary_copy_is_explicit(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+
+    assert window._check_summary_text(["pending"], ["blocker"]) == "导出前需处理：1 个阻断项、1 个待确认项"
+    assert window._check_summary_text([], []) == "导出前检查通过，可以导出"
+
+
+def test_check_export_button_ignores_card_warnings_without_blockers(qtbot, sqlite_conn, tmp_path, monkeypatch):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     profit_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)
     service.update_and_confirm_order(profit_id, price=Decimal("12.65"), shares=1400, order_type="sell_profit")
@@ -687,18 +776,18 @@ def test_check_export_button_reports_warnings_without_blockers(qtbot, sqlite_con
     monkeypatch.setattr(
         window,
         "_show_export_check_dialog",
-        lambda pending, blockers, warnings: captured.append((pending, blockers, warnings)),
+        lambda pending, blockers: captured.append((pending, blockers)),
     )
 
     qtbot.mouseClick(window.check_export_button, Qt.LeftButton)
 
-    pending, blockers, warnings = captured[0]
+    pending, blockers = captured[0]
     assert pending == []
     assert blockers == []
-    assert any("止盈合计 1,400 不等于持仓数量" in item for item in warnings)
-    assert "导出检查: " in window.status_label.text()
-    assert "个提醒项" in window.status_label.text()
-    assert window.check_export_button.property("tone") == "warning"
+    card_warnings = [label.text() for label in window.findChildren(QLabel, "stock_card_warning")]
+    assert any("止盈合计 1,400，不等于持仓 2,800" in item for item in card_warnings)
+    assert "导出前检查通过" in window.status_label.text()
+    assert window.check_export_button.property("tone") == "clean"
     assert window.export_button.isEnabled() is True
 
 
@@ -712,13 +801,13 @@ def test_check_export_button_reports_clean_draft(qtbot, sqlite_conn, tmp_path, m
     monkeypatch.setattr(
         window,
         "_show_export_check_dialog",
-        lambda pending, blockers, warnings: captured.append((pending, blockers, warnings)),
+        lambda pending, blockers: captured.append((pending, blockers)),
     )
 
     qtbot.mouseClick(window.check_export_button, Qt.LeftButton)
 
-    assert captured == [([], [], [])]
-    assert "导出检查通过" in window.status_label.text()
+    assert captured == [([], [])]
+    assert "导出前检查通过" in window.status_label.text()
     assert window.check_export_button.property("tone") == "clean"
     assert window.export_button.isEnabled() is True
 

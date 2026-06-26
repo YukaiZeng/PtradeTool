@@ -230,8 +230,6 @@ class OrderRow(QWidget):
     def _apply_status_style(self) -> None:
         if self.order.confirmed:
             status = "confirmed"
-        elif self.order.source == "inherited":
-            status = "inherited"
         else:
             status = "pending"
         self.status_indicator.setProperty("status", status)

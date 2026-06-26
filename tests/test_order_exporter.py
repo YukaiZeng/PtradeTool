@@ -128,6 +128,18 @@ def test_opening_sell_total_mismatch_warns_not_blocks(sqlite_conn):
     assert any("止盈合计 500 不等于买单合计 1,000" in item for item in validation.warnings)
 
 
+def test_opening_missing_sell_totals_warns_not_blocks(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    buy_id = store.add_order(draft.manage_date, "600000.SH", "浦发银行", "buy_stop", Decimal("10.00"), 1000)
+    store.confirm_order(buy_id)
+
+    validation = validate_export(store.load_draft("20260225"))
+
+    assert validation.can_export is True
+    assert any("止盈合计 0 不等于买单合计 1,000" in item for item in validation.warnings)
+    assert any("止损合计 0 不等于买单合计 1,000" in item for item in validation.warnings)
+
+
 def test_opening_stock_export_preserves_stock_name(sqlite_conn):
     store, draft = make_store_with_draft(sqlite_conn)
     order_id = store.add_order(draft.manage_date, "600000.SH", "浦发银行", "buy_stop", Decimal("10.00"), 1000)

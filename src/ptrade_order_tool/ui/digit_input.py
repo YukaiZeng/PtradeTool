@@ -390,6 +390,7 @@ class DigitInput(QWidget):
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget:
+                widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
 

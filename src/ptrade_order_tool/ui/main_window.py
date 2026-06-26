@@ -358,7 +358,7 @@ class MainWindow(QMainWindow):
         self.open_export_dir_button.hide()
         self.check_export_button = QPushButton("检查")
         self.check_export_button.setObjectName("check_export_button")
-        self.check_export_button.setToolTip("检查未确认订单、阻断项和提醒项")
+        self.check_export_button.setToolTip("检查未确认订单和阻断项")
         self.check_export_button.clicked.connect(self._handle_check_export)
         self.export_button = QPushButton("导出")
         self.export_button.setObjectName("export_button")
@@ -471,23 +471,16 @@ class MainWindow(QMainWindow):
             return
         available = screen.availableGeometry()
         width = self.minimumWidth()
-        height = available.height()
-        self.resize(width, height)
-        self.move(available.right() - width + 1, available.y())
-        QTimer.singleShot(0, self._align_to_available_screen_edge)
-
-    def _align_to_available_screen_edge(self) -> None:
-        screen = self.screen() or QApplication.primaryScreen()
-        if not screen:
-            return
-        available = screen.availableGeometry()
+        self.winId()
         frame = self.frameGeometry()
-        target_x = available.right() - frame.width() + 1
-        target_y = available.top()
-        self.move(target_x + (self.pos().x() - frame.x()), target_y + (self.pos().y() - frame.y()))
-        content_height_delta = available.bottom() - self.frameGeometry().bottom()
-        if content_height_delta:
-            self.resize(self.width(), max(self.minimumHeight(), self.height() + content_height_delta))
+        geometry = self.geometry()
+        frame_top = geometry.top() - frame.top()
+        frame_left = geometry.left() - frame.left()
+        frame_right = frame.right() - geometry.right()
+        frame_bottom = frame.bottom() - geometry.bottom()
+        height = max(self.minimumHeight(), available.height() - frame_top - frame_bottom)
+        self.resize(width, height)
+        self.move(available.right() - width - frame_left - frame_right + 1, available.y())
 
     def _make_action_separator(self) -> QLabel:
         separator = QLabel("|")
@@ -651,12 +644,7 @@ class MainWindow(QMainWindow):
             self._daily_quotes = {}
             self._daily_quotes_date = draft.manage_date
         self.draft = draft
-        self.total_label.setText(f"账户总额 {self._format_money(draft.fund.portfolio_value)}")
-        self.stock_value_label.setText(f"持仓市值 {self._format_money(draft.fund.stock_positions_value)}")
-        opening_amount = self._opening_order_amount(draft)
-        self.opening_amount_label.setText(f"开仓金额 {self._format_money(opening_amount)}")
-        self.opening_amount_label.show()
-        self.cash_label.setText(f"可用余额 {self._format_money(draft.fund.calibrated_cash)}")
+        self._refresh_account_labels(draft)
         self._refresh_draft_summary()
         self.refresh_date_combo()
 
@@ -671,6 +659,14 @@ class MainWindow(QMainWindow):
         self._refresh_locate_unconfirmed_button()
         self._refresh_check_export_button()
         self._schedule_daily_quotes_update(draft)
+
+    def _refresh_account_labels(self, draft: SessionDraft) -> None:
+        self.total_label.setText(f"账户总额 {self._format_money(draft.fund.portfolio_value)}")
+        self.stock_value_label.setText(f"持仓市值 {self._format_money(draft.fund.stock_positions_value)}")
+        opening_amount = self._opening_order_amount(draft)
+        self.opening_amount_label.setText(f"开仓金额 {self._format_money(opening_amount)}")
+        self.opening_amount_label.show()
+        self.cash_label.setText(f"可用余额 {self._format_money(draft.fund.calibrated_cash)}")
 
     def _render_empty_state(self) -> None:
         self._stock_cards_by_code = {}
@@ -687,17 +683,22 @@ class MainWindow(QMainWindow):
 
     def _render_stock_cards_or_empty(self, draft: SessionDraft) -> None:
         self._remember_order_input_widths()
-        self._stock_cards_by_code = {}
-        self._clear_layout(self.stock_layout)
-        if draft.stocks:
-            for stock in draft.stocks:
-                card = self._make_stock_card(stock)
-                self._stock_cards_by_code[stock.ts_code] = card
-                self.stock_layout.addWidget(card)
-        else:
-            self.stock_layout.addWidget(self._make_empty_state_label(read_only=draft.read_only))
-        self.stock_layout.addStretch(1)
-        self._prune_order_input_widths(draft)
+        self._set_stock_area_updates_enabled(False)
+        try:
+            self._stock_cards_by_code = {}
+            self._clear_layout(self.stock_layout)
+            if draft.stocks:
+                for stock in draft.stocks:
+                    card = self._make_stock_card(stock)
+                    self._stock_cards_by_code[stock.ts_code] = card
+                    self.stock_layout.addWidget(card)
+            else:
+                self.stock_layout.addWidget(self._make_empty_state_label(read_only=draft.read_only))
+            self.stock_layout.addStretch(1)
+            self._prune_order_input_widths(draft)
+        finally:
+            self._set_stock_area_updates_enabled(True)
+            self.stock_content.update()
 
     def _make_empty_state_label(self, *, read_only: bool) -> QLabel:
         text = "历史日期无本地数据。" if read_only else "未导入盘后 JSON，也可以直接添加股票并编辑开仓交易单。"
@@ -729,21 +730,20 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "check_export_button"):
             return
         tone = "clean"
-        tooltip = "检查未确认订单、阻断项和提醒项"
+        tooltip = "检查未确认订单和阻断项"
         can_export = False
         if self.draft:
             validation = validate_export(self.draft)
             pending = self._pending_order_lines(self.draft)
+            blockers = self._non_pending_blockers(self.draft, validation.blockers)
+            status_parts = self._check_status_parts(pending, blockers)
             can_export = bool(self.service and self.draft.export_json_path and not validation.blockers)
-            if validation.blockers:
+            if blockers:
                 tone = "blocker"
-                tooltip = f"阻断项 {len(validation.blockers)} 个"
+                tooltip = "，".join(status_parts)
             elif pending:
                 tone = "pending"
-                tooltip = f"待确认项 {len(pending)} 个"
-            elif validation.warnings:
-                tone = "warning"
-                tooltip = f"提醒项 {len(validation.warnings)} 个"
+                tooltip = "，".join(status_parts)
         self.check_export_button.setProperty("tone", tone)
         self.check_export_button.setToolTip(tooltip)
         self._refresh_dynamic_style(self.check_export_button)
@@ -847,6 +847,7 @@ class MainWindow(QMainWindow):
     def _make_stock_card(self, stock):
         card = StockCard(
             stock,
+            parent=self.stock_content,
             read_only=bool(self.draft and self.draft.read_only),
             daily_quote=self._daily_quotes.get(stock.ts_code),
         )
@@ -886,6 +887,59 @@ class MainWindow(QMainWindow):
             for order_id, widths in self._order_input_widths_by_id.items()
             if order_id in current_order_ids
         }
+
+    def _stock_code_for_order(self, order_id: int) -> str | None:
+        if not self.draft:
+            return None
+        for stock in self.draft.stocks:
+            if any(order.id == order_id for order in stock.orders):
+                return stock.ts_code
+        return None
+
+    def _refresh_after_single_stock_order_update(self, ts_code: str | None) -> None:
+        if not self.draft:
+            return
+        self._refresh_account_labels(self.draft)
+        self._refresh_draft_summary()
+        self.refresh_date_combo()
+        if not ts_code or not self._replace_stock_card(ts_code):
+            self._render_stock_cards_or_empty(self.draft)
+        self._refresh_tab_titles()
+        self._apply_stock_filter()
+        self._apply_read_only_state()
+        self.open_export_dir_action.setEnabled(bool(self.draft.export_json_path))
+        self._refresh_locate_unconfirmed_button()
+        self._refresh_check_export_button()
+
+    def _replace_stock_card(self, ts_code: str) -> bool:
+        if not self.draft:
+            return False
+        old_card = self._stock_cards_by_code.get(ts_code)
+        stock = next((stock for stock in self.draft.stocks if stock.ts_code == ts_code), None)
+        if old_card is None or stock is None:
+            return False
+        index = self.stock_layout.indexOf(old_card)
+        if index < 0:
+            return False
+
+        self._remember_order_input_widths()
+        self._set_stock_area_updates_enabled(False)
+        try:
+            new_card = self._make_stock_card(stock)
+            self.stock_layout.removeWidget(old_card)
+            old_card.hide()
+            self._dispose_widget(old_card)
+            self.stock_layout.insertWidget(index, new_card)
+            self._stock_cards_by_code[ts_code] = new_card
+            self._prune_order_input_widths(self.draft)
+        finally:
+            self._set_stock_area_updates_enabled(True)
+            self.stock_content.update()
+        return True
+
+    def _set_stock_area_updates_enabled(self, enabled: bool) -> None:
+        for widget in (self.stock_scroll, self.stock_scroll.viewport(), self.stock_content):
+            widget.setUpdatesEnabled(enabled)
 
     def _schedule_daily_quotes_update(self, draft: SessionDraft) -> None:
         manage_date = draft.manage_date
@@ -1006,9 +1060,13 @@ class MainWindow(QMainWindow):
             item = layout.takeAt(0)
             widget = item.widget()
             if widget:
-                for digit_input in widget.findChildren(DigitInput):
-                    digit_input.clear_cursor()
-                widget.deleteLater()
+                self._dispose_widget(widget)
+
+    def _dispose_widget(self, widget: QWidget) -> None:
+        for digit_input in widget.findChildren(DigitInput):
+            digit_input.clear_cursor()
+        widget.hide()
+        widget.deleteLater()
 
     def _handle_order_confirm(self, row: OrderRow) -> None:
         if self.draft and self.draft.read_only:
@@ -1017,6 +1075,8 @@ class MainWindow(QMainWindow):
         if not self.service or not row.order.id:
             self.status_label.setText("订单服务未就绪")
             return
+        order_id = row.order.id
+        ts_code = self._stock_code_for_order(order_id)
         self.draft = self.service.update_and_confirm_order(
             row.order.id,
             price=row.selected_price(),
@@ -1024,7 +1084,7 @@ class MainWindow(QMainWindow):
             order_type=row.selected_order_type(),
         )
         self.status_label.setText("订单已确认")
-        self.set_draft(self.draft)
+        self._refresh_after_single_stock_order_update(ts_code)
 
     def _handle_order_change(self, row: OrderRow) -> None:
         if self.draft and self.draft.read_only:
@@ -1058,9 +1118,10 @@ class MainWindow(QMainWindow):
         if not self.service or not row.order.id:
             self.status_label.setText("订单服务未就绪")
             return
+        ts_code = self._stock_code_for_order(row.order.id)
         self.draft, self._last_deleted_snapshot = self.service.delete_order_with_snapshot(row.order.id)
         self.status_label.setText("订单已删除")
-        self.set_draft(self.draft)
+        self._refresh_after_single_stock_order_update(ts_code)
         self.undo_delete_button.setEnabled(True)
 
     def _handle_stock_delete(self, stock) -> None:
@@ -1099,7 +1160,7 @@ class MainWindow(QMainWindow):
             order_type=order_type,
         )
         self.status_label.setText("已新增订单，需确认")
-        self.set_draft(self.draft)
+        self._refresh_after_single_stock_order_update(stock.ts_code)
 
     def _handle_add_stock(self) -> None:
         if self.draft and self.draft.read_only:
@@ -1542,13 +1603,13 @@ class MainWindow(QMainWindow):
             return
         validation = self.service.validate_draft_for_export(self.draft.manage_date)
         pending = self._pending_order_lines(self.draft)
-        self._show_export_check_dialog(pending, validation.blockers, validation.warnings)
-        if validation.blockers:
-            self.status_label.setText(f"导出检查: {len(validation.blockers)} 个阻断项")
-        elif validation.warnings:
-            self.status_label.setText(f"导出检查: {len(validation.warnings)} 个提醒项")
+        blockers = self._non_pending_blockers(self.draft, validation.blockers)
+        self._show_export_check_dialog(pending, blockers)
+        status_parts = self._check_status_parts(pending, blockers)
+        if status_parts:
+            self.status_label.setText("导出前检查: " + "，".join(status_parts))
         else:
-            self.status_label.setText("导出检查通过")
+            self.status_label.setText("导出前检查通过")
 
     def _pending_order_lines(self, draft: SessionDraft) -> list[str]:
         lines = []
@@ -1558,23 +1619,42 @@ class MainWindow(QMainWindow):
                 lines.append(f"{stock.ts_code} {stock.stock_name} 待确认 {pending_count} 条")
         return lines
 
-    def _show_export_check_dialog(self, pending: list[str], blockers: list[str], warnings: list[str]) -> None:
+    def _pending_order_blockers(self, draft: SessionDraft) -> set[str]:
+        return {
+            f"{stock.ts_code} {stock.stock_name} 存在未确认订单"
+            for stock in draft.stocks
+            if any(not order.confirmed for order in stock.orders)
+        }
+
+    def _non_pending_blockers(self, draft: SessionDraft, blockers: list[str]) -> list[str]:
+        pending_blockers = self._pending_order_blockers(draft)
+        return [blocker for blocker in blockers if blocker not in pending_blockers]
+
+    def _check_status_parts(self, pending: list[str], blockers: list[str]) -> list[str]:
+        parts = []
+        if blockers:
+            parts.append(f"{len(blockers)} 个阻断项")
+        if pending:
+            parts.append(f"{len(pending)} 个待确认项")
+        return parts
+
+    def _check_summary_text(self, pending: list[str], blockers: list[str]) -> str:
+        summary_parts = self._check_status_parts(pending, blockers)
+        if summary_parts:
+            return "导出前需处理：" + "、".join(summary_parts)
+        return "导出前检查通过，可以导出"
+
+    def _show_export_check_dialog(self, pending: list[str], blockers: list[str]) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("导出检查")
+        dialog.setWindowTitle("导出前检查")
         dialog.setModal(True)
         layout = QVBoxLayout(dialog)
-        if blockers:
-            summary_text = f"需要处理 {len(blockers)} 项后才能导出"
-        elif warnings:
-            summary_text = f"有 {len(warnings)} 项建议复核，可继续导出"
-        else:
-            summary_text = "检查通过，可以导出"
+        summary_text = self._check_summary_text(pending, blockers)
         summary = QLabel(summary_text)
         summary.setObjectName("export_check_summary")
         layout.addWidget(summary)
         layout.addWidget(self._make_export_check_section("阻断项", blockers, "blocker"))
         layout.addWidget(self._make_export_check_section("待确认", pending, "pending"))
-        layout.addWidget(self._make_export_check_section("提醒项", warnings, "warning"))
         buttons = QHBoxLayout()
         locate_button = QPushButton("定位")
         close_button = QPushButton("关闭")
@@ -1586,7 +1666,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(locate_button)
         buttons.addWidget(close_button)
         layout.addLayout(buttons)
-        all_lines = [summary_text, *pending, *blockers, *warnings]
+        all_lines = [summary_text, *pending, *blockers]
         content_width = max((dialog.fontMetrics().horizontalAdvance(line) for line in all_lines), default=280)
         dialog.setMinimumWidth(max(360, min(content_width + 96, 920)))
         dialog.adjustSize()
@@ -1620,20 +1700,9 @@ class MainWindow(QMainWindow):
             return
         validation = self.service.validate_draft_for_export(self.draft.manage_date)
         if validation.blockers:
-            QMessageBox.warning(self, "无法导出", self._format_export_validation(validation.blockers, []))
+            QMessageBox.warning(self, "无法导出", self._format_export_validation(validation.blockers))
             self.status_label.setText(validation.blockers[0])
             return
-        if validation.warnings:
-            reply = QMessageBox.question(
-                self,
-                "导出提醒",
-                self._format_export_validation([], validation.warnings) + "\n\n是否继续导出？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                self.status_label.setText("已取消导出")
-                return
         try:
             validation = self.service.export_draft(self.draft.manage_date)
         except FileExistsError:
@@ -1653,16 +1722,11 @@ class MainWindow(QMainWindow):
             return
         self._finish_export_success()
 
-    def _format_export_validation(self, blockers: list[str], warnings: list[str]) -> str:
+    def _format_export_validation(self, blockers: list[str]) -> str:
         lines = []
         if blockers:
             lines.append(f"阻断项 {len(blockers)} 个：")
             lines.extend(f"- {item}" for item in blockers)
-        if warnings:
-            if lines:
-                lines.append("")
-            lines.append(f"提醒项 {len(warnings)} 个：")
-            lines.extend(f"- {item}" for item in warnings)
         return "\n".join(lines)
 
     def _finish_export_success(self) -> None:

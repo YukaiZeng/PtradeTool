@@ -612,7 +612,7 @@ def test_more_menu_contains_only_low_frequency_actions(qtbot, sqlite_conn, tmp_p
 
     assert "设置目录及Token" in action_texts
     assert "导入盘后JSON" in action_texts
-    assert "同步JSON到当前界面" in action_texts
+    assert "同步JSON到界面" in action_texts
     assert "重新导入" not in action_texts
     assert "撤销删除" not in action_texts
     assert "定位未确认" not in action_texts
@@ -932,16 +932,3 @@ def test_manual_import_button_imports_selected_json(qtbot, sqlite_conn, tmp_path
 
     assert window.draft.manage_date == "20260225"
     assert "导入完成" in window.status_label.text()
-
-
-def test_reimport_button_overwrites_current_draft(qtbot, sqlite_conn, tmp_path, monkeypatch):
-    service, draft, _ = make_service(sqlite_conn, tmp_path)
-    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
-    window = MainWindow(service.load_draft("20260225"), service)
-    qtbot.addWidget(window)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
-
-    qtbot.mouseClick(window.reimport_button, Qt.LeftButton)
-
-    assert all(order.id != order_id for stock in service.load_draft("20260225").stocks for order in stock.orders)
-    assert "重新导入完成" in window.status_label.text()

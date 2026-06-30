@@ -53,7 +53,7 @@ PtradeTool/
 3. 软件优先打开最新盘后 JSON；找不到时打开最近交易日的空白交易单。
 4. 检查账户信息，维护开仓、止盈、止损订单。
 5. 每条订单确认后执行导出。
-6. 如当前管理日期的盘后 JSON 或导出 JSON 与界面不一致，可在“更多”中执行“同步JSON到当前界面”；盘后 JSON 同步 `Fund/Hold`，导出 JSON 同步订单计划并设为已确认。
+6. 如当前管理日期的盘后 JSON 或导出 JSON 与界面不一致，可在“更多”中执行“同步JSON到界面”；盘后 JSON 同步 `Fund/Hold`，导出 JSON 同步订单计划并设为已确认。
 7. 将导出的 `order_data/YYYYMMDD.json` 放到 PTrade 研究环境对应目录。
 8. 在 PTrade 中运行 [in-app.py](src/ptrade_order_tool/runtime/in-app.py) 进行次日自动监控。
 

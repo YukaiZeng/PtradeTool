@@ -321,11 +321,34 @@ def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path
 
     assert window.stock_search_input.isEnabled() is False
     assert window.add_stock_button.isEnabled() is False
-    assert window.reimport_button.isEnabled() is False
+    assert window.manual_import_button.isEnabled() is False
+    assert window.manual_import_action.isEnabled() is False
     assert all(not row.confirm_button.isEnabled() for row in rows)
     assert all(not row.delete_button.isEnabled() for row in rows)
     assert all(button.text() == "+" for button in add_buttons)
     assert all(not button.isEnabled() for button in add_buttons)
+
+
+def test_historical_draft_blocks_manual_import_handler(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
+    imported.manage_date = "20260226"
+    service.drafts.create_draft(
+        imported,
+        expected_trade_date=None,
+        ptrade_json_path="/tmp/20260226.json",
+        export_json_path="/tmp/order_data/20260226.json",
+    )
+    service._now_provider = lambda: datetime(2026, 2, 26, 17, 31)
+    window = MainWindow(service.load_draft("20260225"), service, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+    called = {"dialog": False}
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: called.__setitem__("dialog", True) or ("", ""))
+
+    window._handle_manual_import()
+
+    assert called["dialog"] is False
+    assert "历史日期只读" in window.status_label.text()
 
 
 def test_delete_history_action_removes_selected_date(qtbot, sqlite_conn, tmp_path, monkeypatch):

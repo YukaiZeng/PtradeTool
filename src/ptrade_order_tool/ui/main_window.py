@@ -306,10 +306,6 @@ class MainWindow(QMainWindow):
         self.manual_import_button.setObjectName("manual_import_button")
         self.manual_import_button.setToolTip("手动导入 PTrade 盘后 JSON")
         self.manual_import_button.clicked.connect(self._handle_manual_import)
-        self.reimport_button = QPushButton("重导")
-        self.reimport_button.setObjectName("reimport_button")
-        self.reimport_button.setToolTip("用原盘后 JSON 覆盖当前日期草稿")
-        self.reimport_button.clicked.connect(self._handle_reimport)
         self.total_label = QLabel("账户总额 --")
         self.total_label.setObjectName("account_total_label")
         self.stock_value_label = QLabel("持仓市值 --")
@@ -381,7 +377,7 @@ class MainWindow(QMainWindow):
         self.more_menu = QMenu(self.more_button)
         self.settings_action = self._make_more_action("设置目录及Token", self._handle_settings)
         self.manual_import_action = self._make_more_action("导入盘后JSON", self._handle_manual_import)
-        self.sync_json_action = self._make_more_action("同步JSON到当前界面", self._handle_sync_json_to_ui)
+        self.sync_json_action = self._make_more_action("同步JSON到界面", self._handle_sync_json_to_ui)
         self.stock_update_action = self._make_more_action("更新股票数据", self._handle_stock_update)
         self.open_export_dir_action = self._make_more_action("打开导出目录", self._handle_open_export_dir)
         self.delete_history_action = self._make_more_action("删除历史数据", self._handle_delete_history)
@@ -502,7 +498,6 @@ class MainWindow(QMainWindow):
         self._set_pointing_cursors(
             self.settings_button,
             self.manual_import_button,
-            self.reimport_button,
             self.stock_update_button,
             self.add_stock_button,
             self.open_export_dir_button,
@@ -1078,9 +1073,10 @@ class MainWindow(QMainWindow):
 
     def _apply_read_only_state(self) -> None:
         read_only = bool(self.draft and self.draft.read_only)
+        self.manual_import_button.setEnabled(not read_only)
+        self.manual_import_action.setEnabled(not read_only)
         self.stock_search_input.setEnabled(not read_only)
         self._refresh_add_stock_enabled()
-        self.reimport_button.setEnabled(not read_only and bool(self.draft and self.draft.ptrade_json_path))
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
         while layout.count():
@@ -1440,6 +1436,9 @@ class MainWindow(QMainWindow):
         return f"当前: {masked}，留空表示不修改"
 
     def _handle_manual_import(self) -> None:
+        if self.draft and self.draft.read_only:
+            self.status_label.setText("历史日期只读")
+            return
         if not self.service:
             self.status_label.setText("导入服务未就绪")
             return
@@ -1459,31 +1458,6 @@ class MainWindow(QMainWindow):
         self.refresh_trade_calendar(silent=True)
         self.status_label.setText("导入完成")
         self.set_draft(self.draft, default_to_holding=True)
-
-    def _handle_reimport(self) -> None:
-        if self.draft and self.draft.read_only:
-            self.status_label.setText("历史日期只读")
-            return
-        if not self.service or not self.draft:
-            self.status_label.setText("没有可重新导入的草稿")
-            return
-        reply = QMessageBox.question(
-            self,
-            "重新导入当前日期",
-            "重新导入会覆盖当前日期草稿，是否继续？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            self.status_label.setText("已取消重新导入")
-            return
-        try:
-            self.draft = self.service.reimport_current_draft(self.draft.manage_date)
-        except Exception as exc:
-            self.status_label.setText(f"重新导入失败: {exc}")
-            return
-        self.status_label.setText("重新导入完成")
-        self.set_draft(self.draft)
 
     def _handle_sync_json_to_ui(self) -> None:
         if not self.service or not self.draft:

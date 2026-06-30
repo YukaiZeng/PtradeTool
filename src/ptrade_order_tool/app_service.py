@@ -463,7 +463,7 @@ class AppService:
             return False
         if draft.stocks:
             if raise_on_edited:
-                raise ValueError("当前日期已有手动草稿，请先删除历史数据或使用重新导入流程")
+                raise ValueError("当前日期已有手动草稿，请先删除历史数据后再导入")
             return False
         return True
 

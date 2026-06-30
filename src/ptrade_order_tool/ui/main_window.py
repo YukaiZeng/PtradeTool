@@ -381,9 +381,11 @@ class MainWindow(QMainWindow):
         self.more_menu = QMenu(self.more_button)
         self.settings_action = self._make_more_action("设置目录及Token", self._handle_settings)
         self.manual_import_action = self._make_more_action("导入盘后JSON", self._handle_manual_import)
+        self.sync_json_action = self._make_more_action("同步JSON到当前界面", self._handle_sync_json_to_ui)
         self.stock_update_action = self._make_more_action("更新股票数据", self._handle_stock_update)
         self.open_export_dir_action = self._make_more_action("打开导出目录", self._handle_open_export_dir)
         self.delete_history_action = self._make_more_action("删除历史数据", self._handle_delete_history)
+        self.sync_json_action.setEnabled(False)
         self.open_export_dir_action.setEnabled(False)
         self.more_button.setMenu(self.more_menu)
 
@@ -656,6 +658,7 @@ class MainWindow(QMainWindow):
         self._apply_stock_filter()
         self._apply_read_only_state()
         self.open_export_dir_action.setEnabled(bool(draft.export_json_path))
+        self._refresh_sync_json_action()
         self._refresh_locate_unconfirmed_button()
         self._refresh_check_export_button()
         self._schedule_daily_quotes_update(draft)
@@ -749,6 +752,30 @@ class MainWindow(QMainWindow):
         self._refresh_dynamic_style(self.check_export_button)
         if hasattr(self, "export_button"):
             self.export_button.setEnabled(can_export)
+
+    def _refresh_sync_json_action(self) -> None:
+        if not hasattr(self, "sync_json_action"):
+            return
+        enabled = False
+        tooltip = "当前日期没有可同步的 JSON 差异"
+        if self.service and self.draft:
+            try:
+                plan = self.service.json_sync_plan(self.draft.manage_date)
+            except Exception as exc:
+                tooltip = f"检查 JSON 失败: {exc}"
+            else:
+                enabled = plan.can_sync
+                if not plan.ptrade_json_path and not plan.order_json_path:
+                    tooltip = "当前日期没有盘后 JSON 或导出 JSON"
+                elif enabled:
+                    parts = []
+                    if plan.has_ptrade_changes:
+                        parts.append("盘后 JSON")
+                    if plan.has_order_changes:
+                        parts.append("导出 JSON")
+                    tooltip = "可同步: " + "、".join(parts)
+        self.sync_json_action.setEnabled(enabled)
+        self.sync_json_action.setToolTip(tooltip)
 
     def _date_combo_text(self, draft: SessionDraft) -> str:
         suffix = " 只读" if draft.read_only else ""
@@ -1457,6 +1484,19 @@ class MainWindow(QMainWindow):
             return
         self.status_label.setText("重新导入完成")
         self.set_draft(self.draft)
+
+    def _handle_sync_json_to_ui(self) -> None:
+        if not self.service or not self.draft:
+            self.status_label.setText("没有可同步的草稿")
+            return
+        try:
+            self.draft = self.service.sync_json_to_draft(self.draft.manage_date)
+        except Exception as exc:
+            self.status_label.setText(f"同步失败: {exc}")
+            self._refresh_sync_json_action()
+            return
+        self.status_label.setText("已同步JSON到界面")
+        self.set_draft(self.draft, default_to_holding=True)
 
     def _handle_stock_update(self) -> None:
         if not self.service:

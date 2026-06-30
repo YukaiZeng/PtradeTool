@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -12,12 +13,12 @@ from zoneinfo import ZoneInfo
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.daily_quote_store import DailyQuoteStore
 from ptrade_order_tool.data.draft_store import DraftStore
-from ptrade_order_tool.data.order_exporter import export_order_json, validate_export
+from ptrade_order_tool.data.order_exporter import ORDER_TYPES, build_order_json, export_order_json, validate_export
 from ptrade_order_tool.data.ptrade_importer import StockMatcher, parse_ptrade_json
 from ptrade_order_tool.data.stock_master import load_tushare_token
 from ptrade_order_tool.data.trade_calendar import TradeCalendar
 from ptrade_order_tool.logging_utils import get_logger
-from ptrade_order_tool.models import DailyQuote, ExportValidation, FundSnapshot, ImportedPtradeData, OrderType, SessionDraft
+from ptrade_order_tool.models import DailyQuote, ExportValidation, FundSnapshot, Holding, ImportedPtradeData, OrderType, SessionDraft
 
 
 PTRADER_JSON_RE = re.compile(r"^\d{8}\.json$")
@@ -29,6 +30,19 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 class StartupResult:
     draft: SessionDraft | None
     message: str
+
+
+@dataclass(slots=True)
+class JsonSyncPlan:
+    manage_date: str
+    ptrade_json_path: Path | None = None
+    order_json_path: Path | None = None
+    has_ptrade_changes: bool = False
+    has_order_changes: bool = False
+
+    @property
+    def can_sync(self) -> bool:
+        return self.has_ptrade_changes or self.has_order_changes
 
 
 class AppService:
@@ -316,6 +330,64 @@ class AppService:
     def validate_draft_for_export(self, manage_date: str) -> ExportValidation:
         return validate_export(self.load_draft(manage_date))
 
+    def json_sync_plan(self, manage_date: str) -> JsonSyncPlan:
+        plan = JsonSyncPlan(
+            manage_date=manage_date,
+            ptrade_json_path=find_ptrade_json_for_date(self.config.ptrade_data_dir, manage_date),
+            order_json_path=find_order_json_for_date(self.config.order_data_dir, manage_date),
+        )
+        if not plan.ptrade_json_path and not plan.order_json_path:
+            return plan
+        try:
+            draft = self.drafts.load_draft(manage_date)
+        except KeyError:
+            draft = self._empty_draft(manage_date, export_state="empty")
+        if plan.ptrade_json_path:
+            imported = parse_ptrade_json(plan.ptrade_json_path, self.stock_matcher)
+            plan.has_ptrade_changes = self._ptrade_data_differs(imported, draft)
+        if plan.order_json_path:
+            order_data = self._load_order_json(plan.order_json_path)
+            plan.has_order_changes = self._order_data_differs(order_data, draft)
+        return plan
+
+    def sync_json_to_draft(self, manage_date: str) -> SessionDraft:
+        plan = self.json_sync_plan(manage_date)
+        if not plan.ptrade_json_path and not plan.order_json_path:
+            raise FileNotFoundError(f"No JSON found for manage date: {manage_date}")
+
+        if plan.ptrade_json_path:
+            imported = parse_ptrade_json(plan.ptrade_json_path, self.stock_matcher)
+            export_json_path = self._export_json_path(manage_date)
+            try:
+                current = self.drafts.load_draft(manage_date)
+                if current.export_json_path:
+                    export_json_path = current.export_json_path
+            except KeyError:
+                pass
+            self.drafts.sync_fund_and_holdings(
+                imported,
+                expected_trade_date=self.calendar.next_trade_day(manage_date),
+                ptrade_json_path=str(plan.ptrade_json_path),
+                export_json_path=export_json_path,
+            )
+        elif plan.order_json_path:
+            try:
+                self.drafts.load_draft(manage_date)
+            except KeyError:
+                self._create_or_open_blank(manage_date)
+
+        if plan.order_json_path:
+            self.drafts.replace_orders(manage_date, self._load_order_json(plan.order_json_path))
+            self.drafts.mark_exported(manage_date)
+
+        self.logger.info(
+            "json_synced manage_date=%s ptrade_json=%s order_json=%s",
+            manage_date,
+            plan.ptrade_json_path,
+            plan.order_json_path,
+        )
+        return self.load_draft(manage_date)
+
     def load_daily_quotes(
         self,
         trade_date: str,
@@ -372,9 +444,7 @@ class AppService:
         previous_order_path = None
         if previous_day and self.config.order_data_dir:
             previous_order_path = Path(self.config.order_data_dir) / f"{previous_day}.json"
-        export_json_path = ""
-        if self.config.order_data_dir:
-            export_json_path = str(Path(self.config.order_data_dir) / f"{imported.manage_date}.json")
+        export_json_path = self._export_json_path(imported.manage_date)
         return self._with_read_only_state(self.drafts.create_draft(
             imported,
             expected_trade_date=expected_trade_date,
@@ -399,9 +469,7 @@ class AppService:
 
     def _create_or_open_blank(self, manage_date: str) -> SessionDraft:
         imported = ImportedPtradeData(manage_date=manage_date, fund=self._empty_fund(), holdings=[])
-        export_json_path = ""
-        if self.config.order_data_dir:
-            export_json_path = str(Path(self.config.order_data_dir) / f"{manage_date}.json")
+        export_json_path = self._export_json_path(manage_date)
         self.logger.info("blank_draft_opened manage_date=%s", manage_date)
         return self._with_read_only_state(self.drafts.create_draft(
             imported,
@@ -412,9 +480,7 @@ class AppService:
         ))
 
     def _empty_draft(self, manage_date: str, *, export_state: str = "draft") -> SessionDraft:
-        export_json_path = ""
-        if self.config.order_data_dir:
-            export_json_path = str(Path(self.config.order_data_dir) / f"{manage_date}.json")
+        export_json_path = self._export_json_path(manage_date)
         return SessionDraft(
             manage_date=manage_date,
             expected_trade_date=self.calendar.next_trade_day(manage_date),
@@ -425,6 +491,11 @@ class AppService:
             export_state=export_state,
             read_only=self._manage_date_is_read_only(manage_date) if export_state == "empty" else False,
         )
+
+    def _export_json_path(self, manage_date: str) -> str:
+        if not self.config.order_data_dir:
+            return ""
+        return str(Path(self.config.order_data_dir) / f"{manage_date}.json")
 
     def _empty_fund(self) -> FundSnapshot:
         return FundSnapshot(
@@ -496,6 +567,90 @@ class AppService:
     ) -> bool:
         return manage_date < self.current_editable_manage_date(today=today, now=now)
 
+    def _ptrade_data_differs(self, imported: ImportedPtradeData, draft: SessionDraft) -> bool:
+        return self._fund_key(imported.fund) != self._fund_key(draft.fund) or self._holdings_key(imported.holdings) != self._draft_holdings_key(draft)
+
+    def _fund_key(self, fund: FundSnapshot) -> tuple[str, str, str, str, str]:
+        return (
+            _decimal_key(fund.cash),
+            _decimal_key(fund.positions_value),
+            _decimal_key(fund.portfolio_value),
+            _decimal_key(fund.stock_positions_value),
+            _decimal_key(fund.calibrated_cash),
+        )
+
+    def _holdings_key(self, holdings: list[Holding]) -> tuple[tuple[object, ...], ...]:
+        return tuple(
+            sorted(
+                (
+                    holding.ts_code,
+                    holding.stock_code,
+                    holding.stock_name,
+                    holding.current_amount,
+                    holding.enable_amount,
+                    _decimal_key(holding.last_price),
+                    _decimal_key(holding.cost_price),
+                    _decimal_key(holding.market_value),
+                    _decimal_key(holding.profit_ratio),
+                    _decimal_key(holding.income_balance),
+                    holding.is_stock,
+                )
+                for holding in holdings
+            )
+        )
+
+    def _draft_holdings_key(self, draft: SessionDraft) -> tuple[tuple[object, ...], ...]:
+        return self._holdings_key([stock.holding for stock in draft.stocks if stock.holding])
+
+    def _order_data_differs(self, order_data: dict[str, dict[str, Any]], draft: SessionDraft) -> bool:
+        return self._order_data_key(order_data) != self._order_data_key(build_order_json(draft))
+
+    def _load_order_json(self, path: Path) -> dict[str, dict[str, Any]]:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Order JSON root must be an object")
+        result: dict[str, dict[str, Any]] = {}
+        for raw_ts_code, raw_stock_data in data.items():
+            if not isinstance(raw_stock_data, dict):
+                continue
+            ts_code = str(raw_ts_code)
+            stock_name = str(raw_stock_data.get("stock_name") or ts_code)
+            orders_by_type: dict[str, list[dict[str, object]]] = {}
+            for order_type in ORDER_TYPES:
+                raw_orders = raw_stock_data.get(order_type, [])
+                if not isinstance(raw_orders, list):
+                    continue
+                for raw_order in raw_orders:
+                    if not isinstance(raw_order, dict) or "price" not in raw_order or "shares" not in raw_order:
+                        continue
+                    orders_by_type.setdefault(order_type, []).append(
+                        {
+                            "price": Decimal(str(raw_order["price"])),
+                            "shares": int(Decimal(str(raw_order["shares"]))),
+                        }
+                    )
+            result[ts_code] = {"stock_name": stock_name, "orders": orders_by_type}
+        return result
+
+    def _order_data_key(self, order_data: dict[str, dict[str, Any]]) -> tuple[tuple[object, ...], ...]:
+        rows = []
+        for ts_code, stock_data in order_data.items():
+            stock_name = str(stock_data.get("stock_name") or ts_code)
+            orders_by_type = stock_data.get("orders")
+            if orders_by_type is None:
+                orders_by_type = {
+                    order_type: stock_data.get(order_type, [])
+                    for order_type in ORDER_TYPES
+                    if stock_data.get(order_type)
+                }
+            order_rows = []
+            for order_type in ORDER_TYPES:
+                for order in orders_by_type.get(order_type, []):
+                    order_rows.append((order_type, _decimal_key(order["price"]), int(order["shares"])))
+            if order_rows:
+                rows.append((ts_code, stock_name, tuple(order_rows)))
+        return tuple(sorted(rows))
+
 
 def find_latest_ptrade_json(ptrade_data_dir: str) -> Path | None:
     if not ptrade_data_dir:
@@ -522,6 +677,15 @@ def find_ptrade_json_for_date(ptrade_data_dir: str, manage_date: str) -> Path | 
     return None
 
 
+def find_order_json_for_date(order_data_dir: str, manage_date: str) -> Path | None:
+    if not order_data_dir:
+        return None
+    path = Path(order_data_dir) / f"{manage_date}.json"
+    if path.is_file() and PTRADER_JSON_RE.match(path.name):
+        return path
+    return None
+
+
 def find_earliest_ptrade_json(ptrade_data_dir: str) -> Path | None:
     if not ptrade_data_dir:
         return None
@@ -536,3 +700,11 @@ def find_earliest_ptrade_json(ptrade_data_dir: str) -> Path | None:
     if not candidates:
         return None
     return min(candidates, key=lambda path: path.stem)
+
+
+def _decimal_key(value: Decimal | int | float | str) -> str:
+    decimal_value = Decimal(str(value))
+    normalized = decimal_value.normalize()
+    if normalized == normalized.to_integral_value():
+        return format(normalized.quantize(Decimal("1")), "f")
+    return format(normalized, "f")

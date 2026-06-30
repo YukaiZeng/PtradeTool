@@ -253,6 +253,148 @@ class DraftStore:
         self._mark_modified(manage_date)
         self.conn.commit()
 
+    def sync_fund_and_holdings(
+        self,
+        imported: ImportedPtradeData,
+        *,
+        expected_trade_date: str | None,
+        ptrade_json_path: str,
+        export_json_path: str,
+    ) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        existing = self._session_exists(imported.manage_date)
+        try:
+            if existing:
+                self.conn.execute(
+                    """
+                    update sessions
+                    set expected_trade_date = ?,
+                        ptrade_json_path = ?,
+                        export_json_path = case when export_json_path = '' then ? else export_json_path end,
+                        updated_at = ?
+                    where manage_date = ?
+                    """,
+                    (
+                        expected_trade_date,
+                        ptrade_json_path,
+                        export_json_path,
+                        now,
+                        imported.manage_date,
+                    ),
+                )
+                self.conn.execute("delete from fund_snapshots where manage_date = ?", (imported.manage_date,))
+                self.conn.execute("delete from holdings where manage_date = ?", (imported.manage_date,))
+            else:
+                self.conn.execute(
+                    """
+                    insert into sessions (
+                        manage_date, expected_trade_date, ptrade_json_path, export_json_path,
+                        export_state, created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        imported.manage_date,
+                        expected_trade_date,
+                        ptrade_json_path,
+                        export_json_path,
+                        "draft",
+                        now,
+                        now,
+                    ),
+                )
+            self._insert_fund(imported.manage_date, imported.fund)
+            for holding in imported.holdings:
+                self._insert_holding(imported.manage_date, holding)
+            self._mark_modified(imported.manage_date)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def replace_orders(
+        self,
+        manage_date: str,
+        orders_by_stock: dict[str, dict[str, Any]],
+    ) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        try:
+            self.conn.execute("delete from orders where manage_date = ?", (manage_date,))
+            active_order_stocks = {
+                ts_code
+                for ts_code, stock_data in orders_by_stock.items()
+                if any(orders for orders in stock_data.get("orders", {}).values())
+            }
+            placeholders = ", ".join("?" for _ in active_order_stocks)
+            if placeholders:
+                self.conn.execute(
+                    f"""
+                    delete from draft_stocks
+                    where manage_date = ?
+                      and ts_code not in ({placeholders})
+                      and ts_code not in (
+                          select ts_code from holdings where manage_date = ?
+                      )
+                    """,
+                    (manage_date, *active_order_stocks, manage_date),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    delete from draft_stocks
+                    where manage_date = ?
+                      and ts_code not in (
+                          select ts_code from holdings where manage_date = ?
+                      )
+                    """,
+                    (manage_date, manage_date),
+                )
+            for ts_code, stock_data in orders_by_stock.items():
+                stock_name = str(stock_data.get("stock_name") or ts_code)
+                orders_by_type = stock_data.get("orders", {})
+                if not any(orders for orders in orders_by_type.values()):
+                    continue
+                holding_exists = self.conn.execute(
+                    "select 1 from holdings where manage_date = ? and ts_code = ?",
+                    (manage_date, ts_code),
+                ).fetchone()
+                if not holding_exists:
+                    self.conn.execute(
+                        """
+                        insert into draft_stocks (manage_date, ts_code, stock_name, created_at)
+                        values (?, ?, ?, ?)
+                        on conflict(manage_date, ts_code) do update set
+                            stock_name = excluded.stock_name
+                        """,
+                        (manage_date, ts_code, stock_name, now),
+                    )
+                for order_type, orders in orders_by_type.items():
+                    for sort_order, order in enumerate(orders, start=1):
+                        self.conn.execute(
+                            """
+                            insert into orders (
+                                manage_date, ts_code, stock_name, order_type, price, shares,
+                                confirmed, source, warning, sort_order
+                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                manage_date,
+                                ts_code,
+                                stock_name,
+                                order_type,
+                                _decimal_text(order["price"]),
+                                int(order["shares"]),
+                                1,
+                                "manual",
+                                "",
+                                sort_order,
+                            ),
+                        )
+            self._mark_modified(manage_date)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def save_order_change(self, order_id: int, *, price: Decimal, shares: int, order_type: OrderType) -> None:
         manage_date = self._order_manage_date(order_id)
         self.conn.execute(

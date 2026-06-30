@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -611,10 +612,51 @@ def test_more_menu_contains_only_low_frequency_actions(qtbot, sqlite_conn, tmp_p
 
     assert "设置目录及Token" in action_texts
     assert "导入盘后JSON" in action_texts
+    assert "同步JSON到当前界面" in action_texts
     assert "重新导入" not in action_texts
     assert "撤销删除" not in action_texts
     assert "定位未确认" not in action_texts
     assert "删除历史数据" in action_texts
+
+
+def test_sync_json_action_is_enabled_only_when_json_differs(qtbot, sqlite_conn, tmp_path):
+    service, draft, order_dir = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+
+    assert window.sync_json_action.isEnabled() is False
+
+    (order_dir / "20260225.json").write_text(
+        json.dumps({"002153.SZ": {"stock_name": "石基信息", "buy_limit": [{"price": 11.4, "shares": 1400}]}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    window._refresh_sync_json_action()
+
+    assert window.sync_json_action.isEnabled() is True
+    assert "导出 JSON" in window.sync_json_action.toolTip()
+
+
+def test_sync_json_action_updates_ui_and_confirms_orders(qtbot, sqlite_conn, tmp_path):
+    service, draft, order_dir = make_service(sqlite_conn, tmp_path)
+    service.drafts.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_limit", Decimal("8.8"), 1000)
+    (order_dir / "20260225.json").write_text(
+        json.dumps({"002153.SZ": {"stock_name": "石基信息", "buy_limit": [{"price": 11.4, "shares": 1400}]}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    window = MainWindow(service.load_draft("20260225"), service)
+    qtbot.addWidget(window)
+
+    window.sync_json_action.trigger()
+
+    synced = service.load_draft("20260225")
+    shiji = next(stock for stock in synced.stocks if stock.ts_code == "002153.SZ")
+    leiman = next(stock for stock in synced.stocks if stock.ts_code == "300162.SZ")
+    assert [(order.order_type, order.price, order.shares, order.confirmed) for order in shiji.orders] == [
+        ("buy_limit", Decimal("11.4"), 1400, True)
+    ]
+    assert leiman.orders == []
+    assert window.sync_json_action.isEnabled() is False
+    assert "已同步JSON到界面" in window.status_label.text()
 
 
 def test_undo_delete_restores_order(qtbot, sqlite_conn, tmp_path):

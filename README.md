@@ -19,6 +19,7 @@ Ptrade Order Tool 是一个用于维护 PTrade 日常交易计划的桌面工具
 - 支持突破买、回调买、止盈、止损多条条件单添加、确认、删除和一次撤销。
 - 价格和股数使用位数输入控件，支持键盘输入、千分位显示、增加/删除最高位，并防止滚轮误改。
 - 订单修改后自动回到未确认状态；存在未确认订单或阻断项时禁止导出。
+- “更多”菜单支持将当前管理日期的盘后 JSON 和导出 JSON 同步到当前界面。
 - 持仓止盈/止损合计、开仓卖单合计和止盈/止损价格关系会在股票卡片内即时提示。
 - 上一交易日订单 JSON 中的止盈/止损单可按原价格和股数继承到当前持仓，并设为未确认。
 - 股票基础数据、交易日历、日线行情可通过 Tushare Pro 维护；网络异常不会阻断编辑和导出。
@@ -52,8 +53,9 @@ PtradeTool/
 3. 软件优先打开最新盘后 JSON；找不到时打开最近交易日的空白交易单。
 4. 检查账户信息，维护开仓、止盈、止损订单。
 5. 每条订单确认后执行导出。
-6. 将导出的 `order_data/YYYYMMDD.json` 放到 PTrade 研究环境对应目录。
-7. 在 PTrade 中运行 [in-app.py](src/ptrade_order_tool/runtime/in-app.py) 进行次日自动监控。
+6. 如当前管理日期的盘后 JSON 或导出 JSON 与界面不一致，可在“更多”中执行“同步JSON到当前界面”；盘后 JSON 同步 `Fund/Hold`，导出 JSON 同步订单计划并设为已确认。
+7. 将导出的 `order_data/YYYYMMDD.json` 放到 PTrade 研究环境对应目录。
+8. 在 PTrade 中运行 [in-app.py](src/ptrade_order_tool/runtime/in-app.py) 进行次日自动监控。
 
 ## Tushare Token
 

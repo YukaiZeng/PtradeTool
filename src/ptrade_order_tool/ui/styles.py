@@ -137,7 +137,6 @@ QPushButton#check_export_button[tone="clean"]:hover {
 }
 
 QPushButton#add_stock_button,
-QPushButton#manual_import_button,
 QPushButton#locate_unconfirmed_button {
     font-weight: 700;
 }

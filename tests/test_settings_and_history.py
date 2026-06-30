@@ -321,7 +321,6 @@ def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path
 
     assert window.stock_search_input.isEnabled() is False
     assert window.add_stock_button.isEnabled() is False
-    assert window.manual_import_button.isEnabled() is False
     assert window.manual_import_action.isEnabled() is False
     assert all(not row.confirm_button.isEnabled() for row in rows)
     assert all(not row.delete_button.isEnabled() for row in rows)

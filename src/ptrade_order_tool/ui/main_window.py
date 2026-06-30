@@ -302,10 +302,6 @@ class MainWindow(QMainWindow):
         self.settings_button.setObjectName("settings_button")
         self.settings_button.setToolTip("设置 PTrade 盘后目录、订单导出目录和 Tushare Token")
         self.settings_button.clicked.connect(self._handle_settings)
-        self.manual_import_button = QPushButton("导入")
-        self.manual_import_button.setObjectName("manual_import_button")
-        self.manual_import_button.setToolTip("手动导入 PTrade 盘后 JSON")
-        self.manual_import_button.clicked.connect(self._handle_manual_import)
         self.total_label = QLabel("账户总额 --")
         self.total_label.setObjectName("account_total_label")
         self.stock_value_label = QLabel("持仓市值 --")
@@ -497,7 +493,6 @@ class MainWindow(QMainWindow):
     def _set_top_button_cursors(self) -> None:
         self._set_pointing_cursors(
             self.settings_button,
-            self.manual_import_button,
             self.stock_update_button,
             self.add_stock_button,
             self.open_export_dir_button,
@@ -1073,7 +1068,6 @@ class MainWindow(QMainWindow):
 
     def _apply_read_only_state(self) -> None:
         read_only = bool(self.draft and self.draft.read_only)
-        self.manual_import_button.setEnabled(not read_only)
         self.manual_import_action.setEnabled(not read_only)
         self.stock_search_input.setEnabled(not read_only)
         self._refresh_add_stock_enabled()

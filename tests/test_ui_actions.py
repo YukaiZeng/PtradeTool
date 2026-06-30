@@ -921,14 +921,14 @@ def test_export_button_refreshes_after_overwrite(qtbot, sqlite_conn, tmp_path, m
     assert window.status_label.toolTip() == f"导出完成: {order_dir / '20260225.json'}"
 
 
-def test_manual_import_button_imports_selected_json(qtbot, sqlite_conn, tmp_path, monkeypatch):
+def test_manual_import_action_imports_selected_json(qtbot, sqlite_conn, tmp_path, monkeypatch):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     window = MainWindow(draft, service)
     qtbot.addWidget(window)
     manual_path = tmp_path / "ptrade_data" / "20260225.json"
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(manual_path), ""))
 
-    qtbot.mouseClick(window.manual_import_button, Qt.LeftButton)
+    window.manual_import_action.trigger()
 
     assert window.draft.manage_date == "20260225"
     assert "导入完成" in window.status_label.text()

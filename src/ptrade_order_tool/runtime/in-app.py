@@ -222,7 +222,7 @@ def tick_logic(context):
                         sell_profit_trigger_price_max = max(sell_profit_order["price"] for sell_profit_order in sell_profit_orders) # 预设最大止盈位置
                         if current_high_price >= sell_profit_trigger_price_max:
                             buy_stop_order["order_status"] = "over_profit_price"
-                            log.warning(f"高价超过预设止盈位置，忽略stop买单: {stock_code} {stock_name}，高价: {current_high_price}，预设止盈价: {sell_profit_trigger_price_max}")
+                            log.warning(f"现高价超过预设止盈位置，忽略stop买单: {stock_code} {stock_name}，现高价: {current_high_price}，预设止盈价: {sell_profit_trigger_price_max}")
                             continue
 
                     # 下单
@@ -256,7 +256,7 @@ def tick_logic(context):
                    
                 # 触发价
                 buy_limit_trigger_price = buy_limit_order["price"]
-                if current_price <= buy_limit_trigger_price: # 价格触发，<=
+                if current_low_price <= buy_limit_trigger_price: # 价格触发，<=
                     # 触发即标记买单已匹配
                     buy_limit_order["order_done"] = True
 
@@ -284,7 +284,7 @@ def tick_logic(context):
                         sell_loss_trigger_price_min = min(sell_loss_order["price"] for sell_loss_order in sell_loss_orders) # 预设最小止损位置
                         if current_low_price <= sell_loss_trigger_price_min:
                             buy_limit_order["order_status"] = "under_loss_price"
-                            log.warning(f"低价低于预设止损位置，忽略limit买单: {stock_code} {stock_name}，低价: {current_low_price}，预设止损价: {sell_loss_trigger_price_min}")
+                            log.warning(f"现低价低于预设止损位置，忽略limit买单: {stock_code} {stock_name}，现低价: {current_low_price}，预设止损价: {sell_loss_trigger_price_min}")
                             continue
 
                     # 下单
@@ -297,7 +297,7 @@ def tick_logic(context):
                         g.entrust_record["buy"][order_id] = {
                             "stock_code": stock_code,
                             "stock_name": stock_name,
-                            "current_price": current_price,
+                            "current_low_price": current_low_price,
                             "entrust_shares": buy_shares,
                             "entrust_time": context.blotter.current_dt, # 委托下单时间
                             "order_dict": buy_limit_order # 记录买单信息
@@ -305,11 +305,11 @@ def tick_logic(context):
                         buy_limit_order["order_status"] = "entrusted"
                         
                         # 日志
-                        log.info(f"limit买单委托提交: {stock_code} {stock_name}，现价: {current_price}，limit买单触发价: {buy_limit_trigger_price}，委托: {buy_shares}股")
+                        log.info(f"limit买单委托提交: {stock_code} {stock_name}，现低价: {current_low_price}，limit买单触发价: {buy_limit_trigger_price}，委托: {buy_shares}股")
                     else:
                         buy_limit_order["order_status"] = "entrust_failed"
                         # 日志
-                        log.warning(f"limit买单委托失败: {stock_code} {stock_name}，现价: {current_price}，limit买单触发价: {buy_limit_trigger_price}，委托: {buy_shares}股")
+                        log.warning(f"limit买单委托失败: {stock_code} {stock_name}，现低价: {current_low_price}，limit买单触发价: {buy_limit_trigger_price}，委托: {buy_shares}股")
         
         # -------- 卖出逻辑 --------
         # 当前持仓

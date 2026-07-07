@@ -125,6 +125,7 @@ class DigitInput(QWidget):
         self._menu_highlight_index = 0
         self._buttons: list[DigitButton] = []
         self._separator_width = 8
+        self._visual_integer_width: int | None = None
 
         self.setFocusPolicy(Qt.StrongFocus)
         self._layout = QHBoxLayout(self)
@@ -140,6 +141,18 @@ class DigitInput(QWidget):
 
     def integer_width(self) -> int:
         return len(self._integer_digits)
+
+    def visual_integer_width(self) -> int:
+        return max(len(self._integer_digits), self._visual_integer_width or 0)
+
+    def set_visual_integer_width(self, width: int | None) -> None:
+        target_width = None if width is None else max(width, len(self._integer_digits))
+        if target_width == self._visual_integer_width:
+            return
+        self._visual_integer_width = target_width
+        self._rebuild()
+        self._update_cursor_style()
+        self._update_fixed_width()
 
     def set_integer_width(self, width: int) -> None:
         significant_integer = "".join(self._integer_digits).lstrip("0") or "0"
@@ -391,20 +404,30 @@ class DigitInput(QWidget):
             widget = item.widget()
             if widget:
                 widget.hide()
-                widget.setParent(None)
+                widget.setObjectName("")
                 widget.deleteLater()
 
         self._buttons = []
         editable_index = 0
-        for index, digit in enumerate(self._integer_digits):
-            editable = self.kind != "shares" or index < len(self._integer_digits) - 2
-            button = DigitButton(editable_index if editable else -1, digit, self, editable=editable)
-            if editable:
-                button.digitChanged.connect(self.set_digit)
-                editable_index += 1
-            self._buttons.append(button)
-            self._layout.addWidget(button)
-            if self._has_thousands_separator_after(index):
+        visual_integer_width = self.visual_integer_width()
+        leading_placeholder_count = visual_integer_width - len(self._integer_digits)
+        for visual_index in range(visual_integer_width):
+            integer_index = visual_index - leading_placeholder_count
+            if integer_index < 0:
+                placeholder = QWidget(self)
+                placeholder.setObjectName("digit_alignment_placeholder")
+                placeholder.setFixedSize(26, 30)
+                self._layout.addWidget(placeholder)
+            else:
+                digit = self._integer_digits[integer_index]
+                editable = self.kind != "shares" or integer_index < len(self._integer_digits) - 2
+                button = DigitButton(editable_index if editable else -1, digit, self, editable=editable)
+                if editable:
+                    button.digitChanged.connect(self.set_digit)
+                    editable_index += 1
+                self._buttons.append(button)
+                self._layout.addWidget(button)
+            if self._has_thousands_separator_after(visual_index, visual_integer_width):
                 separator = QLabel(",")
                 separator.setObjectName("digit_thousands_separator")
                 separator.setAlignment(Qt.AlignCenter)
@@ -478,12 +501,13 @@ class DigitInput(QWidget):
                 return button
         return None
 
-    def _has_thousands_separator_after(self, integer_index: int) -> bool:
-        digits_to_right = len(self._integer_digits) - integer_index - 1
+    def _has_thousands_separator_after(self, integer_index: int, width: int | None = None) -> bool:
+        integer_width = len(self._integer_digits) if width is None else width
+        digits_to_right = integer_width - integer_index - 1
         return digits_to_right > 0 and digits_to_right % 3 == 0
 
     def _thousands_separator_count(self) -> int:
-        return max(0, (len(self._integer_digits) - 1) // 3)
+        return max(0, (self.visual_integer_width() - 1) // 3)
 
     def _update_cursor_style(self) -> None:
         for button in self._buttons:
@@ -504,7 +528,7 @@ class DigitInput(QWidget):
             self._event_filter_installed = False
 
     def _update_fixed_width(self) -> None:
-        digit_count = len(self._integer_digits) + len(self._fraction_digits)
+        digit_count = self.visual_integer_width() + len(self._fraction_digits)
         separator_count = self._thousands_separator_count()
         dot_width = 8 if self.kind == "price" else 0
         widget_count = digit_count + separator_count + (1 if self.kind == "price" else 0)

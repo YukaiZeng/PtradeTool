@@ -266,6 +266,70 @@ def test_stock_card_uses_vertical_order_sections_with_add_button_in_header(qtbot
     assert card.delete_stock_button is not None
 
 
+def test_stock_card_aligns_order_digits_within_card_without_changing_values(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="娴﹀彂閾惰",
+        is_holding=True,
+        orders=[
+            OrderDraft("sell_profit", Decimal("1234.56"), 16400),
+            OrderDraft("sell_profit", Decimal("8.15"), 16000),
+            OrderDraft("sell_profit", Decimal("7.45"), 1400),
+        ],
+    )
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+    card.show()
+    qtbot.waitExposed(card)
+
+    wide_row = next(row for row in card.order_rows if row.order.shares == 16400)
+    short_row = next(row for row in card.order_rows if row.order.shares == 1400)
+
+    assert short_row.shares_input.text() == "1400"
+    assert short_row.shares_input.value() == 1400
+    assert short_row.shares_input.integer_width() == 4
+    assert short_row.shares_input.visual_integer_width() == 5
+    assert len(short_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder")) == 1
+    assert short_row.price_input.text() == "007.45"
+    assert short_row.price_input.value() == Decimal("7.45")
+    assert short_row.price_input.integer_width() == 3
+    assert short_row.price_input.visual_integer_width() == 4
+
+    wide_thousands_x = wide_row.shares_input._buttons[1].mapTo(card, QPoint(0, 0)).x()
+    short_thousands_x = short_row.shares_input._buttons[0].mapTo(card, QPoint(0, 0)).x()
+    assert short_thousands_x == wide_thousands_x
+
+
+def test_stock_card_order_digit_alignment_is_scoped_per_stock(qtbot):
+    aligned_stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="娴﹀彂閾惰",
+        is_holding=True,
+        orders=[
+            OrderDraft("sell_profit", Decimal("9.35"), 16400),
+            OrderDraft("sell_profit", Decimal("7.45"), 1400),
+        ],
+    )
+    standalone_stock = StockDraft(
+        ts_code="000001.SZ",
+        stock_name="骞冲畨閾惰",
+        is_holding=True,
+        orders=[OrderDraft("sell_profit", Decimal("7.45"), 1400)],
+    )
+    aligned_card = StockCard(aligned_stock)
+    standalone_card = StockCard(standalone_stock)
+    qtbot.addWidget(aligned_card)
+    qtbot.addWidget(standalone_card)
+
+    aligned_short_row = next(row for row in aligned_card.order_rows if row.order.shares == 1400)
+    standalone_row = standalone_card.order_rows[0]
+
+    assert aligned_short_row.shares_input.visual_integer_width() == 5
+    assert len(aligned_short_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder")) == 1
+    assert standalone_row.shares_input.visual_integer_width() == 4
+    assert standalone_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder") == []
+
+
 def test_stock_card_hides_empty_order_body_for_empty_sections(qtbot):
     stock = StockDraft(ts_code="600000.SH", stock_name="浦发银行", is_holding=False, orders=[])
     card = StockCard(stock)
@@ -486,6 +550,24 @@ def test_main_window_empty_state(qtbot):
     assert window.frameGeometry().height() == available.height()
     assert window.frameGeometry().right() == available.right()
     assert window.findChild(type(window.account_bar), "top_tool_panel") is not None
+
+
+def test_main_window_loaded_draft_defaults_to_content_width(qtbot, sqlite_conn):
+    draft = make_fixture_draft(sqlite_conn)
+    draft.stocks[0].orders = [
+        OrderDraft("sell_profit", Decimal("9.35"), 16400),
+        OrderDraft("sell_profit", Decimal("8.15"), 16000),
+        OrderDraft("sell_profit", Decimal("7.45"), 1400),
+    ]
+    window = MainWindow(draft, auto_update_stock_basic=False)
+    qtbot.addWidget(window)
+
+    available = window.screen().availableGeometry()
+    order_row = next(row for row in window.findChildren(OrderRow) if row.order.shares == 16400)
+
+    assert window.width() > window.minimumWidth()
+    assert window.frameGeometry().width() <= available.width()
+    assert order_row.delete_button.mapTo(window, QPoint(order_row.delete_button.width(), 0)).x() <= window.width()
 
 
 def test_main_window_geometry_is_stable_after_first_show(qtbot):

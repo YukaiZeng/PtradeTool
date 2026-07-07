@@ -263,7 +263,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Ptrade Order Tool")
         self.setMinimumSize(640, 0)
-        self._resize_to_default_screen_half()
         self.draft = draft
         self.service = service
         self._auto_update_daily_quotes = auto_update_daily_quotes
@@ -446,6 +445,7 @@ class MainWindow(QMainWindow):
             self.set_draft(draft, default_to_holding=True)
         else:
             self._render_empty_state()
+        self._resize_to_default_screen_height_and_content_width()
         self.refresh_stock_update_button()
         self.refresh_date_combo()
         self._set_top_button_cursors()
@@ -458,13 +458,12 @@ class MainWindow(QMainWindow):
         self.more_menu.addAction(action)
         return action
 
-    def _resize_to_default_screen_half(self) -> None:
+    def _resize_to_default_screen_height_and_content_width(self) -> None:
         screen = QApplication.primaryScreen()
         if not screen:
             self.resize(self.minimumWidth(), 720)
             return
         available = screen.availableGeometry()
-        width = self.minimumWidth()
         self.winId()
         frame = self.frameGeometry()
         geometry = self.geometry()
@@ -472,9 +471,27 @@ class MainWindow(QMainWindow):
         frame_left = geometry.left() - frame.left()
         frame_right = frame.right() - geometry.right()
         frame_bottom = frame.bottom() - geometry.bottom()
+        max_client_width = max(self.minimumWidth(), available.width() - frame_left - frame_right)
+        width = self._default_window_width(max_client_width)
         height = max(self.minimumHeight(), available.height() - frame_top - frame_bottom)
         self.resize(width, height)
         self.move(available.right() - width - frame_left - frame_right + 1, available.y())
+
+    def _default_window_width(self, available_width: int) -> int:
+        if not self.stock_content.findChildren(OrderRow):
+            return self.minimumWidth()
+        content_width = max(
+            self.account_bar.sizeHint().width(),
+            self.stock_nav_bar.sizeHint().width(),
+            self.stock_content.sizeHint().width(),
+        )
+        root_margins = self.centralWidget().layout().contentsMargins() if self.centralWidget() and self.centralWidget().layout() else None
+        horizontal_margins = 0
+        if root_margins is not None:
+            horizontal_margins = root_margins.left() + root_margins.right()
+        scrollbar_extent = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        desired_width = content_width + horizontal_margins + scrollbar_extent + 8
+        return min(max(self.minimumWidth(), desired_width), available_width)
 
     def _make_action_separator(self) -> QLabel:
         separator = QLabel("|")
@@ -875,6 +892,7 @@ class MainWindow(QMainWindow):
         card.addOrderRequested.connect(self._handle_add_order)
         card.deleteStockRequested.connect(self._handle_stock_delete)
         self._restore_order_input_widths(card)
+        card.align_order_input_digits()
         return card
 
     def _remember_order_input_widths(self) -> None:

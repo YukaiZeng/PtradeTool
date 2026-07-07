@@ -147,6 +147,7 @@ class StockCard(QFrame):
         super().__init__(parent)
         self.stock = stock
         self.read_only = read_only
+        self.order_rows: list[OrderRow] = []
         self.setObjectName(f"stock_card_{stock.ts_code}")
         self.setFrameShape(QFrame.StyledPanel)
 
@@ -278,10 +279,11 @@ class StockCard(QFrame):
                 row = OrderRow(order, read_only=read_only)
                 row.confirmRequested.connect(self.confirmRequested)
                 row.deleteRequested.connect(self.deleteRequested)
-                row.changed.connect(self.orderChanged)
+                row.changed.connect(self._handle_order_row_changed)
                 row.typeChanged.connect(self.orderTypeChanged)
                 group_layout.addWidget(row)
                 order_rows.append(row)
+                self.order_rows.append(row)
             for index, row in enumerate(order_rows):
                 previous_row = order_rows[index - 1] if index > 0 else None
                 next_row = order_rows[index + 1] if index < len(order_rows) - 1 else None
@@ -289,9 +291,23 @@ class StockCard(QFrame):
             row, column = order_positions[order_type]
             self.orders_grid.addWidget(group_box, row, column)
         self.orders_grid.setColumnStretch(0, 1)
+        self.align_order_input_digits()
 
     def set_daily_quote(self, quote: DailyQuote | None) -> None:
         self._set_daily_quote(quote)
+
+    def align_order_input_digits(self) -> None:
+        if not self.order_rows:
+            return
+        price_width = max(row.price_input.integer_width() for row in self.order_rows)
+        shares_width = max(row.shares_input.integer_width() for row in self.order_rows)
+        for row in self.order_rows:
+            row.price_input.set_visual_integer_width(price_width)
+            row.shares_input.set_visual_integer_width(shares_width)
+
+    def _handle_order_row_changed(self, row: OrderRow) -> None:
+        self.align_order_input_digits()
+        self.orderChanged.emit(row)
 
     def _make_daily_quote_widget(self, quote: DailyQuote | None) -> QWidget:
         widget = QWidget()

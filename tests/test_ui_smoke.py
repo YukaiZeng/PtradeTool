@@ -294,6 +294,8 @@ def test_stock_card_aligns_order_digits_within_card_without_changing_values(qtbo
     assert short_row.price_input.value() == Decimal("7.45")
     assert short_row.price_input.integer_width() == 3
     assert short_row.price_input.visual_integer_width() == 4
+    assert short_row.price_input.findChildren(QLabel, "digit_thousands_separator") == []
+    assert len(short_row.price_input.findChildren(QWidget, "digit_thousands_separator_placeholder")) == 1
 
     wide_thousands_x = wide_row.shares_input._buttons[1].mapTo(card, QPoint(0, 0)).x()
     short_thousands_x = short_row.shares_input._buttons[0].mapTo(card, QPoint(0, 0)).x()

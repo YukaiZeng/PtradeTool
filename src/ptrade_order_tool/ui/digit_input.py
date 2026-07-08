@@ -428,9 +428,13 @@ class DigitInput(QWidget):
                 self._buttons.append(button)
                 self._layout.addWidget(button)
             if self._has_thousands_separator_after(visual_index, visual_integer_width):
-                separator = QLabel(",")
-                separator.setObjectName("digit_thousands_separator")
-                separator.setAlignment(Qt.AlignCenter)
+                if integer_index < 0:
+                    separator = QWidget(self)
+                    separator.setObjectName("digit_thousands_separator_placeholder")
+                else:
+                    separator = QLabel(",")
+                    separator.setObjectName("digit_thousands_separator")
+                    separator.setAlignment(Qt.AlignCenter)
                 separator.setFixedSize(self._separator_width, 30)
                 self._layout.addWidget(separator)
 

@@ -12,11 +12,14 @@ from datetime import datetime
 
 
 # ---------- 参数区 ----------
+# 策略函数触发的间隔秒数（量化环境目前最小即为3s） 
+RUN_INTERVAL_SECONDS = 3
+
 # 买单委托未成撤单时间（s）
 CANCEL_SECONDS_FOR_BUY = 180
 
 # 卖单委托未成撤单时间（s）
-CANCEL_SECONDS_FOR_SELL = 18
+CANCEL_SECONDS_FOR_SELL = 15
 
 # 文件夹路径
 ORDER_DIR = "order_data/" # 斜杠不要少，因为禁用了os模块
@@ -88,7 +91,7 @@ def initialize(context):
     
     # 信息字典
     g.order_result = {} # 存在监控数据
-    g.entrust_record = {} # 当前交易日委托记录 {"buy"/"sell_profit"/"sell_loss": {order_id: 委托信息, ...}}
+    g.entrust_record = {} # 当前交易日委托记录 {"buy_stop"/"buy_limit"/"sell_profit"/"sell_loss": {order_id: 委托信息, ...}}
     
     # 标记order数据是否有效
     g.order_data_ready = False
@@ -97,7 +100,7 @@ def initialize(context):
     run_interval(
         context,
         tick_logic, # 自定义的策略函数
-        seconds=3 # 每3s触发（量化环境目前最小即为3s） 
+        seconds=RUN_INTERVAL_SECONDS 
     ) # 默认使用券商配置时间范围进行处理
  
 
@@ -161,7 +164,7 @@ def tick_logic(context):
         return    
     
     # 当前单位时间的开始时间，datetime.datetime对象(北京时间)
-    now = context.blotter.current_dt
+    # now = context.blotter.current_dt
     
     # 先处理委托（撤单等）
     manage_entrust(context)
@@ -210,7 +213,7 @@ def tick_logic(context):
 
                     # 核验账户资金
                     current_cash = context.portfolio.cash # 当前可用资金(不包含冻结资金)
-                    cash_at_least = buy_shares * current_price # 至少资金
+                    cash_at_least = buy_shares * buy_limit_price # 用保护限价计算至少资金
                     if current_cash < cash_at_least: # 资金不足，错过此买单
                         buy_stop_order["order_status"] = "insufficient_cash"
                         log.warning(f"资金不足错过stop买单: {stock_code} {stock_name}，当前可用资金 {current_cash:,.2f} < {cash_at_least:,.2f} 元")
@@ -226,13 +229,13 @@ def tick_logic(context):
                             continue
 
                     # 下单
-                    order_id = order_market(stock_code, amount=buy_shares, market_type=4, limit_price=buy_limit_price) # 正数表示买入，负数表示卖出
+                    order_id = order(stock_code, amount=buy_shares, limit_price=buy_limit_price) # 正数表示买入，负数表示卖出
 
                     # 下单成功
                     if order_id is not None:
                         # 记录委托
-                        g.entrust_record.setdefault("buy", {})
-                        g.entrust_record["buy"][order_id] = {
+                        g.entrust_record.setdefault("buy_stop", {})
+                        g.entrust_record["buy_stop"][order_id] = {
                             "stock_code": stock_code,
                             "stock_name": stock_name,
                             "current_price": current_price,
@@ -272,7 +275,7 @@ def tick_logic(context):
 
                     # 核验账户资金
                     current_cash = context.portfolio.cash # 当前可用资金(不包含冻结资金)
-                    cash_at_least = buy_shares * current_price # 至少资金
+                    cash_at_least = buy_shares * buy_limit_price # 用保护限价计算至少资金
                     if current_cash < cash_at_least: # 资金不足，错过此买单
                         buy_limit_order["order_status"] = "insufficient_cash"
                         log.warning(f"资金不足错过limit买单: {stock_code} {stock_name}，当前可用资金 {current_cash:,.2f} < {cash_at_least:,.2f} 元")
@@ -288,13 +291,13 @@ def tick_logic(context):
                             continue
 
                     # 下单
-                    order_id = order_market(stock_code, amount=buy_shares, market_type=4, limit_price=buy_limit_price) # 正数表示买入，负数表示卖出
+                    order_id = order(stock_code, amount=buy_shares, limit_price=buy_limit_price) # 正数表示买入，负数表示卖出
 
                     # 下单成功
                     if order_id is not None:
                         # 记录委托
-                        g.entrust_record.setdefault("buy", {})
-                        g.entrust_record["buy"][order_id] = {
+                        g.entrust_record.setdefault("buy_limit", {})
+                        g.entrust_record["buy_limit"][order_id] = {
                             "stock_code": stock_code,
                             "stock_name": stock_name,
                             "current_low_price": current_low_price,
@@ -339,7 +342,7 @@ def tick_logic(context):
                     continue
                 
                 # 下单
-                order_id = order_market(stock_code, amount=-sell_profit_shares, market_type=4, limit_price=sell_profit_limit_price) # 正数表示买入，负数表示卖出
+                order_id = order(stock_code, amount=-sell_profit_shares, limit_price=sell_profit_limit_price) # 正数表示买入，负数表示卖出
                 
                 # 下单成功
                 if order_id is not None:
@@ -381,7 +384,7 @@ def tick_logic(context):
                     continue
                 
                 # 下单
-                order_id = order_market(stock_code, amount=-sell_loss_shares, market_type=4, limit_price=sell_loss_limit_price) # 正数表示买入，负数表示卖出
+                order_id = order(stock_code, amount=-sell_loss_shares, limit_price=sell_loss_limit_price) # 正数表示买入，负数表示卖出
                 
                 # 下单成功
                 if order_id is not None:
@@ -414,7 +417,10 @@ def manage_entrust(context):
     now = context.blotter.current_dt
     
     # 遍历买单委托，买单未成撤单
-    for order_id, entrust_info in g.entrust_record.get("buy", {}).items():
+    buy_entrust_items = []
+    buy_entrust_items.extend(g.entrust_record.get("buy_stop", {}).items())
+    buy_entrust_items.extend(g.entrust_record.get("buy_limit", {}).items())
+    for order_id, entrust_info in buy_entrust_items:
         # 已经核查过
         if entrust_info.get("check_done"):
             continue
@@ -432,7 +438,8 @@ def manage_entrust(context):
 
                 if filled != amount: # 没有全部成交，需要撤单
                     log.info(f'买单撤单: {order_info}')
-                    cancel_order(order_id)
+                    log.info(f'{abs(amount) - abs(filled)}股在{g.cancel_seconds_for_buy}s后未成交，进行撤单')
+                    cancel_order(order_id) 
 
                 # 标记已核查
                 entrust_info["check_done"] = True
@@ -471,9 +478,13 @@ def manage_entrust(context):
                         pass
                     else: # 撤单，让tick_logic重新匹配对应单
                         log.info(f'卖单撤单: {order_info}')
+                        unfilled = abs(amount) - abs(filled)
+                        log.info(f'{unfilled}股在{g.cancel_seconds_for_sell}s后未成交，进行撤单')
                         cancel_order(order_id)
+
+                        # 未成交部分重新下单
                         order_dict["order_done"] = False
-                        order_dict["re_entrust_shares"] = abs(amount) - abs(filled) # tick_logic中不再判断触发价格，立即再次下卖单
+                        order_dict["re_entrust_shares"] = unfilled # tick_logic中不再判断触发价格，立即再次下卖单
 
                 # 标记已核查
                 entrust_info["check_done"] = True

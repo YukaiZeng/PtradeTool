@@ -6,7 +6,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
-from ptrade_order_tool.models import FundSnapshot, Holding, ImportedPtradeData
+from ptrade_order_tool.models import (
+    FundSnapshot,
+    Holding,
+    ImportedPtradeData,
+    calculate_next_trade_available_cash,
+)
 
 
 class PtradeImportError(ValueError):
@@ -31,7 +36,6 @@ def parse_ptrade_json(path: Path, stock_matcher: StockMatcher) -> ImportedPtrade
 
     holdings: list[Holding] = []
     stock_positions_value = Decimal("0")
-    non_stock_market_value = Decimal("0")
 
     for raw_key, raw_holding in hold_data.items():
         if not isinstance(raw_holding, dict):
@@ -46,7 +50,6 @@ def parse_ptrade_json(path: Path, stock_matcher: StockMatcher) -> ImportedPtrade
         market_value = _decimal_value(raw_holding.get("market_value", 0))
 
         if not stock_row:
-            non_stock_market_value += market_value
             continue
 
         holding = Holding(
@@ -70,7 +73,7 @@ def parse_ptrade_json(path: Path, stock_matcher: StockMatcher) -> ImportedPtrade
         positions_value=raw_positions_value,
         portfolio_value=raw_portfolio_value,
         stock_positions_value=stock_positions_value,
-        calibrated_cash=raw_cash + non_stock_market_value,
+        next_trade_available_cash=calculate_next_trade_available_cash(raw_portfolio_value, stock_positions_value),
     )
     return ImportedPtradeData(manage_date=manage_date, fund=fund, holdings=holdings)
 

@@ -676,7 +676,7 @@ class MainWindow(QMainWindow):
         opening_amount = self._opening_order_amount(draft)
         self.opening_amount_label.setText(f"开仓金额 {self._format_money(opening_amount)}")
         self.opening_amount_label.show()
-        self.cash_label.setText(f"可用余额 {self._format_money(draft.fund.calibrated_cash)}")
+        self.cash_label.setText(f"可用余额 {self._format_money(draft.fund.next_trade_available_cash)}")
 
     def _render_empty_state(self) -> None:
         self._stock_cards_by_code = {}

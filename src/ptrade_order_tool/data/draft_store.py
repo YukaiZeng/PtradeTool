@@ -15,6 +15,7 @@ from ptrade_order_tool.models import (
     OrderType,
     SessionDraft,
     StockDraft,
+    calculate_next_trade_available_cash,
 )
 
 
@@ -101,12 +102,14 @@ class DraftStore:
             "select * from fund_snapshots where manage_date = ?",
             (manage_date,),
         ).fetchone()
+        portfolio_value = Decimal(str(fund_row["portfolio_value"]))
+        stock_positions_value = Decimal(str(fund_row["stock_positions_value"]))
         fund = FundSnapshot(
             cash=Decimal(str(fund_row["cash"])),
             positions_value=Decimal(str(fund_row["positions_value"])),
-            portfolio_value=Decimal(str(fund_row["portfolio_value"])),
-            stock_positions_value=Decimal(str(fund_row["stock_positions_value"])),
-            calibrated_cash=Decimal(str(fund_row["calibrated_cash"])),
+            portfolio_value=portfolio_value,
+            stock_positions_value=stock_positions_value,
+            next_trade_available_cash=calculate_next_trade_available_cash(portfolio_value, stock_positions_value),
         )
 
         holdings = {
@@ -604,7 +607,7 @@ class DraftStore:
                 _decimal_text(fund.positions_value),
                 _decimal_text(fund.portfolio_value),
                 _decimal_text(fund.stock_positions_value),
-                _decimal_text(fund.calibrated_cash),
+                _decimal_text(fund.next_trade_available_cash),
             ),
         )
 

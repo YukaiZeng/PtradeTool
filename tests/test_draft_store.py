@@ -129,6 +129,26 @@ def test_existing_draft_is_not_overwritten(sqlite_conn):
     assert [order.order_type for order in shiji.orders] == ["buy_limit"]
 
 
+def test_load_draft_recomputes_next_trade_available_cash_from_totals(sqlite_conn):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+    )
+    sqlite_conn.execute(
+        "update fund_snapshots set calibrated_cash = ? where manage_date = ?",
+        ("1", "20260225"),
+    )
+    sqlite_conn.commit()
+
+    draft = store.load_draft("20260225")
+
+    assert draft.fund.next_trade_available_cash == Decimal("33361.86")
+
+
 def test_overwrite_draft_rolls_back_when_inherited_order_is_invalid(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)

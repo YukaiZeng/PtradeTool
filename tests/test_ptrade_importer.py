@@ -39,7 +39,21 @@ def test_parse_ptrade_json_calibrates_account_values():
     assert result.fund.positions_value == Decimal("88020.0")
     assert result.fund.portfolio_value == Decimal("88381.86")
     assert result.fund.stock_positions_value == Decimal("55020.0")
-    assert result.fund.calibrated_cash == Decimal("33361.86")
+    assert result.fund.next_trade_available_cash == Decimal("33361.86")
+
+
+def test_parse_ptrade_json_calibrates_cash_from_portfolio_minus_stock_value(tmp_path):
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    data["Fund"]["cash"] = 1
+    data["Fund"]["portfolio_value"] = 90000
+    data["Hold"]["002153.SZ"]["market_value"] = 1000
+    path = tmp_path / "20260225.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = parse_ptrade_json(path, FakeStockMatcher())
+
+    assert result.fund.stock_positions_value == Decimal("22644.0")
+    assert result.fund.next_trade_available_cash == Decimal("67356.0")
 
 
 def test_parse_ptrade_json_filters_non_stock_assets():
@@ -62,7 +76,7 @@ def test_parse_ptrade_json_falls_back_to_ptrade_stock_fields_when_stock_cache_em
         "300251.SZ",
     ]
     assert result.fund.stock_positions_value == Decimal("55020.0")
-    assert result.fund.calibrated_cash == Decimal("33361.86")
+    assert result.fund.next_trade_available_cash == Decimal("33361.86")
 
 
 def test_parse_ptrade_json_converts_amounts_to_ints():

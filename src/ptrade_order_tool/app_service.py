@@ -503,7 +503,7 @@ class AppService:
             positions_value=Decimal("0"),
             portfolio_value=Decimal("0"),
             stock_positions_value=Decimal("0"),
-            calibrated_cash=Decimal("0"),
+            next_trade_available_cash=Decimal("0"),
         )
 
     def _manage_date_for_order(self, order_id: int) -> str:
@@ -576,7 +576,7 @@ class AppService:
             _decimal_key(fund.positions_value),
             _decimal_key(fund.portfolio_value),
             _decimal_key(fund.stock_positions_value),
-            _decimal_key(fund.calibrated_cash),
+            _decimal_key(fund.next_trade_available_cash),
         )
 
     def _holdings_key(self, holdings: list[Holding]) -> tuple[tuple[object, ...], ...]:

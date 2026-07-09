@@ -10,13 +10,17 @@ OrderSource = Literal["manual", "inherited"]
 ExportState = Literal["empty", "draft", "exported", "modified_after_export"]
 
 
+def calculate_next_trade_available_cash(portfolio_value: Decimal, stock_positions_value: Decimal) -> Decimal:
+    return portfolio_value - stock_positions_value
+
+
 @dataclass(slots=True)
 class FundSnapshot:
     cash: Decimal
     positions_value: Decimal
     portfolio_value: Decimal
     stock_positions_value: Decimal
-    calibrated_cash: Decimal
+    next_trade_available_cash: Decimal
 
 
 @dataclass(slots=True)

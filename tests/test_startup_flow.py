@@ -51,7 +51,7 @@ def test_open_latest_on_startup_creates_draft(sqlite_conn, tmp_path):
     assert result.draft is not None
     assert result.draft.manage_date == "20260225"
     assert result.draft.expected_trade_date == "20260226"
-    assert result.draft.fund.calibrated_cash == Decimal("33361.86")
+    assert result.draft.fund.next_trade_available_cash == Decimal("33361.86")
 
 
 def test_open_latest_on_startup_does_not_overwrite_existing_draft(sqlite_conn, tmp_path):

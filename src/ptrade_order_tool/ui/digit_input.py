@@ -103,6 +103,7 @@ class DigitMenuAction:
 
 class DigitInput(QWidget):
     valueChanged = Signal()
+    integerWidthChanged = Signal()
     boundaryNavigateRequested = Signal(str)
     keyboardAdvancePastEndRequested = Signal(object)
     _active_cursor_input: DigitInput | None = None
@@ -168,6 +169,7 @@ class DigitInput(QWidget):
         self._rebuild()
         self._update_cursor_style()
         self._update_fixed_width()
+        self.integerWidthChanged.emit()
 
     def value(self) -> Decimal | int:
         if self.kind == "price":
@@ -195,6 +197,8 @@ class DigitInput(QWidget):
             self._rebuild()
         self._update_cursor_style()
         self._update_fixed_width()
+        if len(self._integer_digits) != old_integer_width:
+            self.integerWidthChanged.emit()
         self.valueChanged.emit()
 
     def add_high_digit(self) -> None:
@@ -205,6 +209,7 @@ class DigitInput(QWidget):
         self._rebuild()
         self._update_cursor_style()
         self._update_fixed_width()
+        self.integerWidthChanged.emit()
         self.valueChanged.emit()
 
     def remove_high_digit(self) -> None:
@@ -217,6 +222,7 @@ class DigitInput(QWidget):
         self._rebuild()
         self._update_cursor_style()
         self._update_fixed_width()
+        self.integerWidthChanged.emit()
         self.valueChanged.emit()
 
     def can_remove_high_digit(self) -> bool:

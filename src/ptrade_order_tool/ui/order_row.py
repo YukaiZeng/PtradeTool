@@ -36,6 +36,7 @@ class OrderRow(QWidget):
     deleteRequested = Signal(object)
     changed = Signal(object)
     typeChanged = Signal(object)
+    digitWidthChanged = Signal(object)
 
     def __init__(self, order: OrderDraft, parent: QWidget | None = None, *, read_only: bool = False) -> None:
         super().__init__(parent)
@@ -109,6 +110,8 @@ class OrderRow(QWidget):
         self.type_combo.currentIndexChanged.connect(self._handle_type_changed)
         self.price_input.valueChanged.connect(self._handle_value_changed)
         self.shares_input.valueChanged.connect(self._handle_value_changed)
+        self.price_input.integerWidthChanged.connect(self._handle_digit_width_changed)
+        self.shares_input.integerWidthChanged.connect(self._handle_digit_width_changed)
         self.price_input.boundaryNavigateRequested.connect(self._handle_price_boundary_navigation)
         self.shares_input.boundaryNavigateRequested.connect(self._handle_shares_boundary_navigation)
         self.price_input.keyboardAdvancePastEndRequested.connect(self._handle_price_keyboard_advance_past_end)
@@ -160,6 +163,9 @@ class OrderRow(QWidget):
     def _handle_value_changed(self) -> None:
         self._refresh_amount()
         self._mark_changed()
+
+    def _handle_digit_width_changed(self) -> None:
+        self.digitWidthChanged.emit(self)
 
     def _handle_price_boundary_navigation(self, direction: str) -> None:
         if direction == "left":

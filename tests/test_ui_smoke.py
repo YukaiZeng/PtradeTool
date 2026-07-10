@@ -332,6 +332,56 @@ def test_stock_card_order_digit_alignment_is_scoped_per_stock(qtbot):
     assert standalone_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder") == []
 
 
+def test_stock_card_realigns_order_digits_when_high_digit_width_changes(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="dynamic width",
+        is_holding=False,
+        orders=[
+            OrderDraft("buy_limit", Decimal("9.50"), 1400, confirmed=True),
+            OrderDraft("buy_limit", Decimal("8.50"), 1500, confirmed=True),
+        ],
+    )
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+    rows = card.order_rows
+    edited_row, peer_row = rows
+    changed_rows = []
+    card.orderChanged.connect(changed_rows.append)
+
+    edited_row.price_input.add_high_digit()
+
+    assert [row.price_input.integer_width() for row in rows] == [4, 3]
+    assert [row.price_input.visual_integer_width() for row in rows] == [4, 4]
+    assert len(peer_row.price_input.findChildren(QWidget, "digit_alignment_placeholder")) == 1
+    assert edited_row.order.confirmed is True
+    assert changed_rows == []
+
+    edited_row.price_input.remove_high_digit()
+
+    assert [row.price_input.integer_width() for row in rows] == [3, 3]
+    assert [row.price_input.visual_integer_width() for row in rows] == [3, 3]
+    assert peer_row.price_input.findChildren(QWidget, "digit_alignment_placeholder") == []
+    assert edited_row.order.confirmed is True
+    assert changed_rows == []
+
+    edited_row.shares_input.add_high_digit()
+
+    assert [row.shares_input.integer_width() for row in rows] == [5, 4]
+    assert [row.shares_input.visual_integer_width() for row in rows] == [5, 5]
+    assert len(peer_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder")) == 1
+    assert edited_row.order.confirmed is True
+    assert changed_rows == []
+
+    edited_row.shares_input.remove_high_digit()
+
+    assert [row.shares_input.integer_width() for row in rows] == [4, 4]
+    assert [row.shares_input.visual_integer_width() for row in rows] == [4, 4]
+    assert peer_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder") == []
+    assert edited_row.order.confirmed is True
+    assert changed_rows == []
+
+
 def test_stock_card_hides_empty_order_body_for_empty_sections(qtbot):
     stock = StockDraft(ts_code="600000.SH", stock_name="浦发银行", is_holding=False, orders=[])
     card = StockCard(stock)

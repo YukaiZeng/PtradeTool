@@ -281,6 +281,7 @@ class StockCard(QFrame):
                 row.deleteRequested.connect(self.deleteRequested)
                 row.changed.connect(self._handle_order_row_changed)
                 row.typeChanged.connect(self.orderTypeChanged)
+                row.digitWidthChanged.connect(self._handle_order_digit_width_changed)
                 group_layout.addWidget(row)
                 order_rows.append(row)
                 self.order_rows.append(row)
@@ -308,6 +309,9 @@ class StockCard(QFrame):
     def _handle_order_row_changed(self, row: OrderRow) -> None:
         self.align_order_input_digits()
         self.orderChanged.emit(row)
+
+    def _handle_order_digit_width_changed(self, row: OrderRow) -> None:
+        self.align_order_input_digits()
 
     def _make_daily_quote_widget(self, quote: DailyQuote | None) -> QWidget:
         widget = QWidget()

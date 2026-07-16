@@ -54,6 +54,76 @@ def test_open_latest_on_startup_creates_draft(sqlite_conn, tmp_path):
     assert result.draft.fund.next_trade_available_cash == Decimal("33361.86")
 
 
+def test_open_latest_on_startup_inherits_nearest_effective_stock_order_day(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    (ptrade_dir / "20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (order_dir / "20260224.json").write_text(
+        '{"002153.SZ": {"stock_name": "石基信息", "sell_profit": [{"price": 12.65, "shares": 2800}], "sell_loss": [{"price": 10.99, "shares": 2800}]}}',
+        encoding="utf-8",
+    )
+    (order_dir / "20260225.json").write_text(
+        '{"300251.SZ": {"stock_name": "光线传媒", "sell_profit": [{"price": 12.66, "shares": 100}]}}',
+        encoding="utf-8",
+    )
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
+        FakeStockMatcher(),
+        setup_calendar(sqlite_conn),
+    )
+
+    draft = service.open_latest_on_startup(now=datetime(2026, 2, 26, 17, 31)).draft
+
+    shiji = next(stock for stock in draft.stocks if stock.ts_code == "002153.SZ")
+    guangxian = next(stock for stock in draft.stocks if stock.ts_code == "300251.SZ")
+    assert [(order.order_type, order.price, order.shares) for order in shiji.orders] == [
+        ("sell_profit", Decimal("12.65"), 2800),
+        ("sell_loss", Decimal("10.99"), 2800),
+    ]
+    assert [(order.order_type, order.price, order.shares) for order in guangxian.orders] == [
+        ("sell_profit", Decimal("12.66"), 100),
+    ]
+
+
+def test_order_inheritance_lookback_is_limited_to_three_trade_days(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    (ptrade_dir / "20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (order_dir / "20260222.json").write_text(
+        '{"002153.SZ": {"stock_name": "石基信息", "sell_profit": [{"price": 12.65, "shares": 2800}]}}',
+        encoding="utf-8",
+    )
+    calendar = TradeCalendar(sqlite_conn)
+    calendar.upsert_trade_calendar(
+        [
+            {"cal_date": "20260222", "is_open": 1},
+            {"cal_date": "20260223", "is_open": 1},
+            {"cal_date": "20260224", "is_open": 1},
+            {"cal_date": "20260225", "is_open": 1},
+            {"cal_date": "20260226", "is_open": 1},
+        ],
+        updated_on="20260609",
+    )
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
+        FakeStockMatcher(),
+        calendar,
+    )
+
+    draft = service.open_latest_on_startup(now=datetime(2026, 2, 26, 17, 31)).draft
+
+    shiji = next(stock for stock in draft.stocks if stock.ts_code == "002153.SZ")
+    assert shiji.orders == []
+
+
 def test_open_latest_on_startup_does_not_overwrite_existing_draft(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"

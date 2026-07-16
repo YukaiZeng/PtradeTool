@@ -23,6 +23,7 @@ from ptrade_order_tool.models import DailyQuote, ExportValidation, FundSnapshot,
 
 PTRADER_JSON_RE = re.compile(r"^\d{8}\.json$")
 CURRENT_TRADE_DAY_CUTOFF = time(17, 30)
+INHERITANCE_LOOKBACK_TRADE_DAYS = 3
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -439,20 +440,30 @@ class AppService:
         overwrite: bool,
     ) -> SessionDraft:
         self.logger.info("ptrade_imported path=%s manage_date=%s holdings=%s overwrite=%s", ptrade_json_path, imported.manage_date, len(imported.holdings), overwrite)
-        previous_day = self.calendar.previous_trade_day(imported.manage_date)
         expected_trade_date = self.calendar.next_trade_day(imported.manage_date)
-        previous_order_path = None
-        if previous_day and self.config.order_data_dir:
-            previous_order_path = Path(self.config.order_data_dir) / f"{previous_day}.json"
+        previous_order_paths = self._previous_order_paths(imported.manage_date)
         export_json_path = self._export_json_path(imported.manage_date)
         return self._with_read_only_state(self.drafts.create_draft(
             imported,
             expected_trade_date=expected_trade_date,
             ptrade_json_path=str(ptrade_json_path),
             export_json_path=export_json_path,
-            previous_order_path=previous_order_path,
+            previous_order_path=previous_order_paths,
             overwrite=overwrite,
         ))
+
+    def _previous_order_paths(self, manage_date: str) -> list[Path]:
+        if not self.config.order_data_dir:
+            return []
+        paths: list[Path] = []
+        current_date = manage_date
+        for _ in range(INHERITANCE_LOOKBACK_TRADE_DAYS):
+            previous_day = self.calendar.previous_trade_day(current_date)
+            if not previous_day:
+                break
+            paths.append(Path(self.config.order_data_dir) / f"{previous_day}.json")
+            current_date = previous_day
+        return paths
 
     def _blank_draft_can_be_replaced(self, manage_date: str, *, raise_on_edited: bool) -> bool:
         try:

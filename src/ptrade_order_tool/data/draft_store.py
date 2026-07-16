@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -30,7 +31,7 @@ class DraftStore:
         expected_trade_date: str | None,
         ptrade_json_path: str,
         export_json_path: str,
-        previous_order_path: Path | None = None,
+        previous_order_path: Path | Iterable[Path] | None = None,
         overwrite: bool = False,
     ) -> SessionDraft:
         existing = self._session_exists(imported.manage_date)
@@ -62,7 +63,10 @@ class DraftStore:
             for holding in imported.holdings:
                 self._insert_holding(imported.manage_date, holding)
 
-            inherited_orders = self._load_inherited_sell_orders(previous_order_path)
+            inherited_orders = self._load_inherited_sell_orders(
+                previous_order_path,
+                ts_codes={holding.ts_code for holding in imported.holdings},
+            )
             for holding in imported.holdings:
                 for order in inherited_orders.get(holding.ts_code, []):
                     self._add_order_without_commit(
@@ -74,7 +78,7 @@ class DraftStore:
                         int(order["shares"]),
                         confirmed=False,
                         source="inherited",
-                        warning="继承上一交易日订单，需确认",
+                        warning="继承上一有效交易日订单，需确认",
                     )
             self.conn.commit()
         except Exception:
@@ -663,35 +667,48 @@ class DraftStore:
             sort_order=row["sort_order"],
         )
 
-    def _load_inherited_sell_orders(self, previous_order_path: Path | None) -> dict[str, list[dict[str, Any]]]:
-        if not previous_order_path or not previous_order_path.exists():
-            return {}
-        try:
-            data = json.loads(previous_order_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(data, dict):
+    def _load_inherited_sell_orders(
+        self,
+        previous_order_path: Path | Iterable[Path] | None,
+        *,
+        ts_codes: set[str] | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        if ts_codes is not None and not ts_codes:
             return {}
         inherited: dict[str, list[dict[str, Any]]] = {}
-        for ts_code, stock_info in data.items():
-            if not isinstance(stock_info, dict):
+        resolved_ts_codes: set[str] = set()
+        for order_path in _order_paths(previous_order_path):
+            if ts_codes is not None and resolved_ts_codes >= ts_codes:
+                break
+            data = _load_order_json(order_path)
+            if not isinstance(data, dict):
                 continue
-            for order_type in ("sell_profit", "sell_loss"):
-                orders = stock_info.get(order_type, [])
-                if not isinstance(orders, list):
+            for raw_ts_code, stock_info in data.items():
+                ts_code = str(raw_ts_code)
+                if ts_codes is not None and ts_code not in ts_codes:
                     continue
-                for order in orders:
-                    if not isinstance(order, dict):
+                if ts_code in resolved_ts_codes or not isinstance(stock_info, dict):
+                    continue
+                stock_orders: list[dict[str, Any]] = []
+                for order_type in ("sell_profit", "sell_loss"):
+                    orders = stock_info.get(order_type, [])
+                    if not isinstance(orders, list):
                         continue
-                    if "price" not in order or "shares" not in order:
-                        continue
-                    inherited.setdefault(ts_code, []).append(
-                        {
-                            "order_type": order_type,
-                            "price": order["price"],
-                            "shares": order["shares"],
-                        }
-                    )
+                    for order in orders:
+                        if not isinstance(order, dict):
+                            continue
+                        if "price" not in order or "shares" not in order:
+                            continue
+                        stock_orders.append(
+                            {
+                                "order_type": order_type,
+                                "price": order["price"],
+                                "shares": order["shares"],
+                            }
+                        )
+                if stock_orders:
+                    inherited[ts_code] = stock_orders
+                    resolved_ts_codes.add(ts_code)
         return inherited
 
     def _next_sort_order(self, manage_date: str, ts_code: str, order_type: str) -> int:
@@ -725,3 +742,20 @@ class DraftStore:
 
 def _decimal_text(value: Decimal | int | float | str) -> str:
     return format(Decimal(str(value)), "f")
+
+
+def _order_paths(previous_order_path: Path | Iterable[Path] | None) -> list[Path]:
+    if previous_order_path is None:
+        return []
+    if isinstance(previous_order_path, Path):
+        return [previous_order_path]
+    return list(previous_order_path)
+
+
+def _load_order_json(order_path: Path) -> Any:
+    if not order_path.exists():
+        return None
+    try:
+        return json.loads(order_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None

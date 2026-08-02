@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget
 
 from ptrade_order_tool.models import OrderDraft
 from ptrade_order_tool.ui.digit_input import DigitInput
@@ -125,6 +125,27 @@ def test_digit_menu_opens_centered_below_clicked_digit(qtbot):
     assert menu.geometry().center().x() == button.mapToGlobal(button.rect().center()).x()
     assert abs(menu.y() - button.mapToGlobal(button.rect().bottomLeft()).y()) <= 1
 
+
+def test_digit_menu_flips_above_digit_when_below_screen(qtbot):
+    screen = QApplication.primaryScreen().availableGeometry()
+    host = QWidget()
+    host.resize(220, 50)
+    host.move(screen.left() + 100, screen.bottom() - host.height() + 1)
+    widget = DigitInput("price", host)
+    widget.move(0, 10)
+    qtbot.addWidget(host)
+    host.show()
+    widget.show()
+    qtbot.wait(1)
+    button = widget._buttons[1]
+
+    widget.set_cursor_index(1)
+    widget.show_digit_menu()
+    menu = widget._active_menu
+
+    assert menu is not None
+    assert menu.geometry().bottom() == button.mapToGlobal(button.rect().topLeft()).y() - 1
+    widget.clear_cursor()
 
 def test_cursor_is_cleared_when_clicking_outside_digit_input(qtbot):
     widget = DigitInput("price")

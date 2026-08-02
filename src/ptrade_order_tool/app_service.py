@@ -125,6 +125,7 @@ class AppService:
         shares: int,
         order_type: OrderType,
     ) -> SessionDraft:
+        self._ensure_order_writable(order_id)
         self.drafts.save_and_confirm_order(order_id, price=price, shares=shares, order_type=order_type)
         manage_date = self._manage_date_for_order(order_id)
         self.logger.info("order_confirmed manage_date=%s order_id=%s type=%s price=%s shares=%s", manage_date, order_id, order_type, price, shares)
@@ -138,6 +139,7 @@ class AppService:
         shares: int,
         order_type: OrderType,
     ) -> SessionDraft:
+        self._ensure_order_writable(order_id)
         self.drafts.save_order_change(order_id, price=price, shares=shares, order_type=order_type)
         manage_date = self._manage_date_for_order(order_id)
         self.logger.info("order_changed manage_date=%s order_id=%s type=%s price=%s shares=%s", manage_date, order_id, order_type, price, shares)
@@ -151,6 +153,7 @@ class AppService:
         stock_name: str,
         order_type: OrderType,
     ) -> SessionDraft:
+        self._ensure_manage_date_writable(manage_date)
         self.drafts.add_order(
             manage_date,
             ts_code,
@@ -174,6 +177,7 @@ class AppService:
         return self.add_manual_stock_by_code(manage_date, stock["ts_code"], stock_name=stock["name"])
 
     def add_manual_stock_by_code(self, manage_date: str, ts_code: str, *, stock_name: str = "") -> SessionDraft:
+        self._ensure_manage_date_writable(manage_date)
         stock = self.stock_matcher.resolve_stock(ts_code)
         if not stock and not stock_name:
             raise ValueError(f"未找到股票: {ts_code}")
@@ -279,29 +283,35 @@ class AppService:
         *,
         today: str,
         calendar_rows: list[dict[str, object]],
-        stock_rows: list[dict[str, object]],
+        stock_rows: list[dict[str, object] | tuple[str, str, str, str, str, str, str]],
     ) -> int:
         self.calendar.upsert_trade_calendar(calendar_rows, updated_on=today)
         if not self.calendar.is_trade_day(today) and getattr(self.stock_matcher, "has_any_stock_data", lambda: False)():
             return 0
         if not hasattr(self.stock_matcher, "upsert_stock_basic"):
             raise TypeError("stock_matcher does not support stock row upsert")
-        self.stock_matcher.upsert_stock_basic(stock_rows, updated_on=today)
+        if stock_rows and isinstance(stock_rows[0], tuple) and hasattr(self.stock_matcher, "upsert_prepared_stock_basic"):
+            self.stock_matcher.upsert_prepared_stock_basic(stock_rows)
+        else:
+            self.stock_matcher.upsert_stock_basic(stock_rows, updated_on=today)
         return len(stock_rows)
 
     def delete_order(self, order_id: int) -> SessionDraft:
+        self._ensure_order_writable(order_id)
         manage_date = self._manage_date_for_order(order_id)
         self.drafts.delete_order(order_id)
         self.logger.info("order_deleted manage_date=%s order_id=%s", manage_date, order_id)
         return self.load_draft(manage_date)
 
     def delete_order_with_snapshot(self, order_id: int) -> tuple[SessionDraft, dict[str, Any]]:
+        self._ensure_order_writable(order_id)
         manage_date = self._manage_date_for_order(order_id)
         snapshot = self.drafts.delete_order(order_id)
         self.logger.info("order_deleted manage_date=%s order_id=%s", manage_date, order_id)
         return self.load_draft(manage_date), snapshot
 
     def delete_stock_with_snapshot(self, manage_date: str, ts_code: str) -> tuple[SessionDraft, dict[str, Any]]:
+        self._ensure_manage_date_writable(manage_date)
         snapshot = self.drafts.delete_stock(manage_date, ts_code)
         self.logger.info("stock_deleted manage_date=%s ts_code=%s", manage_date, ts_code)
         return self.load_draft(manage_date), snapshot
@@ -311,6 +321,7 @@ class AppService:
         self.logger.info("manage_date_deleted manage_date=%s", manage_date)
 
     def restore_deleted_order(self, snapshot: dict[str, Any]) -> SessionDraft:
+        self._ensure_manage_date_writable(str(snapshot["manage_date"]))
         self.drafts.restore_deleted_order(snapshot)
         self.logger.info("order_restored manage_date=%s ts_code=%s", snapshot["manage_date"], snapshot["ts_code"])
         return self.load_draft(str(snapshot["manage_date"]))
@@ -522,6 +533,13 @@ class AppService:
         if not row:
             raise KeyError(f"Order not found: {order_id}")
         return str(row["manage_date"])
+
+    def _ensure_order_writable(self, order_id: int) -> None:
+        self._ensure_manage_date_writable(self._manage_date_for_order(order_id))
+
+    def _ensure_manage_date_writable(self, manage_date: str) -> None:
+        if self._manage_date_is_read_only(manage_date):
+            raise PermissionError(f"Historical manage date is read-only: {manage_date}")
 
     def current_editable_manage_date(self, *, today: str | None = None, now: datetime | None = None) -> str:
         today = today or self._today(now)

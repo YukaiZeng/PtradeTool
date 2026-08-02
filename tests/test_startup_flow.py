@@ -251,6 +251,7 @@ def test_import_ptrade_json_does_not_overwrite_edited_blank_draft(sqlite_conn, t
         AppConfig(ptrade_data_dir="", order_data_dir=str(order_dir)),
         FakeStockMatcher(),
         setup_calendar(sqlite_conn),
+        now_provider=lambda: datetime(2026, 2, 25, 17, 31),
     )
     service.open_blank_manage_date("20260225")
     service.add_manual_stock_by_code("20260225", "600000.SH", stock_name="浦发银行")

@@ -2,6 +2,8 @@ import json
 from datetime import datetime
 from decimal import Decimal
 
+import pytest
+
 from ptrade_order_tool.app_service import AppService
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.db import initialize_schema
@@ -316,3 +318,17 @@ def test_sync_json_to_draft_can_update_historical_manage_date(sqlite_conn, tmp_p
     assert synced.read_only is True
     pufa = next(stock for stock in synced.stocks if stock.ts_code == "600000.SH")
     assert pufa.orders[0].confirmed is True
+
+
+def test_service_rejects_interactive_changes_to_historical_draft(sqlite_conn, tmp_path):
+    service, _, _ = make_service(sqlite_conn, tmp_path, now_provider=lambda: datetime(2026, 2, 26, 17, 31))
+    draft = service.import_ptrade_json(tmp_path / "ptrade_data" / "20260225.json")
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "test", "buy_limit", Decimal("11.4"), 1400)
+
+    with pytest.raises(PermissionError):
+        service.update_order_change(
+            order_id,
+            price=Decimal("11.5"),
+            shares=1400,
+            order_type="buy_limit",
+        )

@@ -181,8 +181,14 @@ def connect_db(path: Path) -> sqlite3.Connection:
 
 def initialize_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
-    _migrate_decimal_columns(conn)
-    conn.commit()
+    conn.execute("begin immediate")
+    try:
+        _migrate_decimal_columns(conn)
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
 
 
 def _migrate_decimal_columns(conn: sqlite3.Connection) -> None:

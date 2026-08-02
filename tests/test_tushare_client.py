@@ -54,3 +54,7 @@ def test_tushare_pro_client_raises_on_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="bad token"):
         TushareProClient("token").query("stock_basic")
+
+
+def test_tushare_pro_client_uses_https():
+    assert TushareProClient("token").base_url.startswith("https://")

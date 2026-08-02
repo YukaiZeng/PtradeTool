@@ -4,8 +4,10 @@ from decimal import Decimal
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QAction, QKeyEvent, QWheelEvent
+from PySide6.QtGui import QAction, QGuiApplication, QKeyEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton, QWidget
+
+from ptrade_order_tool.ui.popup_positioning import popup_vertical_position
 
 
 class DigitButton(QPushButton):
@@ -73,7 +75,16 @@ class DigitPopup(QListWidget):
 
     def popup_at_digit(self, button: DigitButton) -> None:
         center = button.mapToGlobal(QPoint(button.width() // 2, button.height()))
-        self.move(center.x() - self.width() // 2, center.y())
+        screen = QGuiApplication.screenAt(center) or button.screen()
+        available = screen.availableGeometry() if screen is not None else self.geometry()
+        button_top = button.mapToGlobal(QPoint(button.width() // 2, 0)).y()
+        popup_y = popup_vertical_position(
+            anchor_top=button_top,
+            anchor_bottom=center.y(),
+            popup_height=self.height(),
+            available=available,
+        )
+        self.move(center.x() - self.width() // 2, popup_y)
         self.show()
         self.raise_()
 

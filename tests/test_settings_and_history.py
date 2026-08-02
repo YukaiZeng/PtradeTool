@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.config import load_config
@@ -42,6 +42,25 @@ def test_settings_dialog_browse_buttons_fill_directories(qtbot, monkeypatch, tmp
     qtbot.mouseClick(dialog.findChild(QPushButton, "ptrade_data_dir_input_browse"), Qt.LeftButton)
 
     assert dialog.ptrade_data_dir_input.text() == str(selected)
+
+
+def test_auto_width_combo_flips_above_when_below_screen(qtbot):
+    screen = QApplication.primaryScreen().availableGeometry()
+    host = QWidget()
+    host.resize(220, 50)
+    host.move(screen.left() + 100, screen.bottom() - host.height() + 1)
+    layout = QVBoxLayout(host)
+    combo = AutoWidthComboBox()
+    combo.addItems(["one", "two", "three"])
+    layout.addWidget(combo)
+    qtbot.addWidget(host)
+    host.show()
+    qtbot.wait(1)
+
+    combo.showPopup()
+    popup = combo.view().window()
+
+    assert popup.geometry().bottom() <= screen.bottom()
 
 
 def test_service_lists_manage_dates(sqlite_conn, tmp_path):

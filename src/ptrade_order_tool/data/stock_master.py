@@ -9,6 +9,8 @@ from typing import Any, Iterable
 
 from ptrade_order_tool.data.tushare_client import TushareProClient
 
+PreparedStockRow = tuple[str, str, str, str, str, str, str]
+
 
 class MissingTushareToken(RuntimeError):
     pass
@@ -27,22 +29,12 @@ class StockMaster:
         self.conn = conn
 
     def upsert_stock_basic(self, rows: Iterable[dict[str, str] | StockRow], updated_on: str) -> None:
-        prepared = []
-        for row in rows:
-            stock = row if isinstance(row, StockRow) else StockRow(**row)
-            name_pinyin, name_initials = _pinyin_fields(stock.name)
-            prepared.append(
-                (
-                    stock.ts_code,
-                    stock.symbol,
-                    stock.name,
-                    name_pinyin,
-                    name_initials,
-                    stock.list_status,
-                    updated_on,
-                )
-            )
+        self.upsert_prepared_stock_basic(prepare_stock_basic_rows(rows, updated_on))
 
+    def upsert_prepared_stock_basic(self, prepared: Iterable[PreparedStockRow]) -> None:
+        rows = list(prepared)
+        if not rows:
+            return
         self.conn.executemany(
             """
             insert into stock_basic (
@@ -56,7 +48,7 @@ class StockMaster:
                 list_status = excluded.list_status,
                 updated_on = excluded.updated_on
             """,
-            prepared,
+            rows,
         )
         self.conn.commit()
 
@@ -74,6 +66,7 @@ class StockMaster:
             rows = list(result)
         self.upsert_stock_basic(rows, updated_on=updated_on)
         return len(rows)
+
 
     def has_any_stock_data(self) -> bool:
         row = self.conn.execute("select 1 from stock_basic limit 1").fetchone()
@@ -139,6 +132,25 @@ class StockMaster:
         if not is_trade_day:
             return "update_disabled_non_trade_day"
         return "update_enabled"
+
+
+def prepare_stock_basic_rows(rows: Iterable[dict[str, str] | StockRow], updated_on: str) -> list[PreparedStockRow]:
+    prepared: list[PreparedStockRow] = []
+    for row in rows:
+        stock = row if isinstance(row, StockRow) else StockRow(**row)
+        name_pinyin, name_initials = _pinyin_fields(stock.name)
+        prepared.append(
+            (
+                stock.ts_code,
+                stock.symbol,
+                stock.name,
+                name_pinyin,
+                name_initials,
+                stock.list_status,
+                updated_on,
+            )
+        )
+    return prepared
 
 
 def load_tushare_token(executable_dir: Path, user_data_dir: Path) -> str:

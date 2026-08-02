@@ -3,6 +3,7 @@ from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.stock_master import StockMaster
 from ptrade_order_tool.data.trade_calendar import TradeCalendar
+from ptrade_order_tool.ui.main_window import MainWindow, StockUpdateWorker
 
 
 class FakePro:
@@ -58,4 +59,57 @@ def test_update_stock_basic_syncs_missing_calendar_first(sqlite_conn, tmp_path, 
 
     assert count == 1
     assert service.calendar.has_calendar_for("20260609") is True
+
+
+def test_stock_update_worker_prepares_stock_rows_outside_ui_thread(monkeypatch):
+    def query(_self, api_name, **_kwargs):
+        if api_name == "trade_cal":
+            return [{"cal_date": "20260609", "is_open": 1}]
+        return [{"ts_code": "600000.SH", "symbol": "600000", "name": "浦发银行", "list_status": "L"}]
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.TushareProClient.query", query)
+    worker = StockUpdateWorker("token", "20260609", "20260101", "20271231")
+    captured = []
+    worker.finishedWithRows.connect(lambda today, calendar_rows, stock_rows: captured.append((today, calendar_rows, stock_rows)))
+
+    worker.run()
+
+    assert captured[0][0] == "20260609"
+    assert captured[0][2][0] == ("600000.SH", "600000", "浦发银行", "pufayinhang", "pfyh", "L", "20260609")
+
+
+def test_stock_update_result_uses_worker_date_for_persistence():
+    captured = []
+
+    class FakeService:
+        def apply_stock_basic_update(self, **kwargs):
+            captured.append(kwargs)
+            return 1
+
+    class Window:
+        service = FakeService()
+
+        def _handle_stock_update_finished(self, count):
+            assert count == 1
+
+    MainWindow._handle_stock_update_rows_loaded(Window(), "20260609", [], [("600000.SH", "600000", "浦发银行", "pufayinhang", "pfyh", "L", "20260609")])
+
+    assert captured == [{
+        "today": "20260609",
+        "calendar_rows": [],
+        "stock_rows": [("600000.SH", "600000", "浦发银行", "pufayinhang", "pfyh", "L", "20260609")],
+    }]
+
+
+def test_apply_stock_basic_update_persists_prepared_worker_rows(sqlite_conn):
+    service, stock_master = make_service(sqlite_conn)
+
+    count = service.apply_stock_basic_update(
+        today="20260609",
+        calendar_rows=[{"cal_date": "20260609", "is_open": 1}],
+        stock_rows=[("600000.SH", "600000", "浦发银行", "pufayinhang", "pfyh", "L", "20260609")],
+    )
+
+    assert count == 1
     assert stock_master.resolve_stock("600000")["name"] == "浦发银行"
+    assert stock_master.search_stocks("pfyh")[0]["ts_code"] == "600000.SH"

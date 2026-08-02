@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QFontMetrics
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -35,11 +35,12 @@ from ptrade_order_tool.app_service import AppService
 from ptrade_order_tool.config import get_executable_dir, get_user_data_dir, save_config
 from ptrade_order_tool.data.daily_quote_store import DAILY_FIELDS
 from ptrade_order_tool.data.order_exporter import validate_export
-from ptrade_order_tool.data.stock_master import MissingTushareToken, load_tushare_token, save_tushare_token
+from ptrade_order_tool.data.stock_master import MissingTushareToken, load_tushare_token, prepare_stock_basic_rows, save_tushare_token
 from ptrade_order_tool.data.tushare_client import TushareProClient
 from ptrade_order_tool.models import DailyQuote, SessionDraft
 from ptrade_order_tool.ui.digit_input import DigitInput
 from ptrade_order_tool.ui.order_row import OrderRow
+from ptrade_order_tool.ui.popup_positioning import popup_vertical_position
 from ptrade_order_tool.ui.settings_dialog import SettingsDialog
 from ptrade_order_tool.ui.stock_card import StockCard
 
@@ -83,7 +84,16 @@ class AutoWidthComboBox(QComboBox):
         self.view().setMinimumWidth(width)
         super().showPopup()
         popup = self.view().window()
-        popup.move(self.mapToGlobal(QPoint(0, self.height())))
+        bottom = self.mapToGlobal(QPoint(0, self.height()))
+        top = self.mapToGlobal(QPoint(0, 0))
+        screen = QGuiApplication.screenAt(bottom) or self.screen()
+        available = screen.availableGeometry() if screen is not None else popup.geometry()
+        popup.move(bottom.x(), popup_vertical_position(
+            anchor_top=top.y(),
+            anchor_bottom=bottom.y(),
+            popup_height=popup.height(),
+            available=available,
+        ))
 
 
 class StockSearchLineEdit(QLineEdit):
@@ -195,7 +205,7 @@ class StockFilterTabs(QWidget):
 
 
 class StockUpdateWorker(QThread):
-    finishedWithRows = Signal(list, list)
+    finishedWithRows = Signal(str, list, list)
     failedWithMessage = Signal(str)
 
     def __init__(self, token: str, today: str, calendar_start_date: str, calendar_end_date: str) -> None:
@@ -217,13 +227,14 @@ class StockUpdateWorker(QThread):
             if self.isInterruptionRequested():
                 return
             stock_rows = client.query("stock_basic", fields="ts_code,symbol,name,list_status")
+            stock_rows = prepare_stock_basic_rows(stock_rows, self.today)
         except MissingTushareToken as exc:
             self.failedWithMessage.emit(str(exc))
         except Exception as exc:
             self.failedWithMessage.emit(f"股票基础数据更新失败: {exc}")
         else:
             if not self.isInterruptionRequested():
-                self.finishedWithRows.emit(calendar_rows, stock_rows)
+                self.finishedWithRows.emit(self.today, calendar_rows, stock_rows)
 
 
 class DailyQuotesWorker(QThread):
@@ -242,12 +253,18 @@ class DailyQuotesWorker(QThread):
 
     def run(self) -> None:
         rows: list[dict[str, object]] = []
-        try:
-            rows = TushareProClient(self.token, timeout=5).query("daily", trade_date=self.manage_date, fields=DAILY_FIELDS)
-        except Exception:
-            rows = []
-        if self.isInterruptionRequested():
-            return
+        client = TushareProClient(self.token, timeout=5)
+        for ts_code in dict.fromkeys(self.ts_codes):
+            if self.isInterruptionRequested():
+                return
+            try:
+                rows.extend(
+                    row
+                    for row in client.query("daily", ts_code=ts_code, trade_date=self.manage_date, fields=DAILY_FIELDS)
+                    if str(row.get("ts_code", "")) == ts_code
+                )
+            except Exception:
+                continue
         self.finishedWithRows.emit(self.manage_date, rows)
 
 
@@ -995,7 +1012,7 @@ class MainWindow(QMainWindow):
             cached_quotes = {}
         if cached_quotes:
             self._handle_daily_quotes_loaded(draft.manage_date, cached_quotes)
-        if hasattr(self.service, "has_daily_quote_cache") and self.service.has_daily_quote_cache(draft.manage_date):
+        if len(cached_quotes) == len(set(ts_codes)):
             return
         if not self._auto_update_daily_quotes:
             return
@@ -1008,10 +1025,11 @@ class MainWindow(QMainWindow):
             return
         if self._daily_quotes_worker and self._daily_quotes_worker.isRunning():
             self._daily_quotes_worker.requestInterruption()
+        missing_ts_codes = [ts_code for ts_code in dict.fromkeys(ts_codes) if ts_code not in cached_quotes]
         self._daily_quotes_worker = DailyQuotesWorker(
             draft.manage_date,
             token,
-            ts_codes,
+            missing_ts_codes,
         )
         self._daily_quote_workers_by_date[draft.manage_date] = self._daily_quotes_worker
         self._track_background_worker(self._daily_quotes_worker)
@@ -1276,7 +1294,19 @@ class MainWindow(QMainWindow):
         self.stock_candidate_popup.setFixedWidth(width)
         self.stock_candidate_popup.setFixedHeight(min(len(labels), 8) * row_height + 2)
         self.stock_candidate_popup.setCurrentRow(-1)
-        popup_pos = self.mapFromGlobal(self.stock_search_input.mapToGlobal(QPoint(0, self.stock_search_input.height())))
+        bottom = self.stock_search_input.mapToGlobal(QPoint(0, self.stock_search_input.height()))
+        top = self.stock_search_input.mapToGlobal(QPoint(0, 0))
+        screen = QGuiApplication.screenAt(bottom) or self.screen()
+        available = screen.availableGeometry() if screen is not None else self.geometry()
+        popup_pos = self.mapFromGlobal(QPoint(
+            bottom.x(),
+            popup_vertical_position(
+                anchor_top=top.y(),
+                anchor_bottom=bottom.y(),
+                popup_height=self.stock_candidate_popup.height(),
+                available=available,
+            ),
+        ))
         self.stock_candidate_popup.move(popup_pos)
         self.stock_candidate_popup.raise_()
         self.stock_candidate_popup.show()
@@ -1494,12 +1524,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"股票基础数据已更新: {count} 条")
         self.refresh_date_combo()
 
-    def _handle_stock_update_rows_loaded(self, calendar_rows: list[dict[str, object]], stock_rows: list[dict[str, object]]) -> None:
+    def _handle_stock_update_rows_loaded(self, today: str, calendar_rows: list[dict[str, object]], stock_rows: list[dict[str, object]]) -> None:
         if not self.service:
             return
         try:
             count = self.service.apply_stock_basic_update(
-                today=datetime.now().strftime("%Y%m%d"),
+                today=today,
                 calendar_rows=calendar_rows,
                 stock_rows=stock_rows,
             )

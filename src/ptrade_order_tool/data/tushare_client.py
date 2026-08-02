@@ -9,7 +9,7 @@ class TushareProClient:
     def __init__(self, token: str, timeout: int = 30) -> None:
         self.token = token
         self.timeout = timeout
-        self.base_url = "http://api.waditu.com/dataapi"
+        self.base_url = "https://api.waditu.com/dataapi"
 
     def query(self, api_name: str, fields: str = "", **kwargs) -> list[dict[str, object]]:
         payload = {

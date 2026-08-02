@@ -5,6 +5,8 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox, QWidget
 
+from ptrade_order_tool.ui import order_row as order_row_module
+from ptrade_order_tool.ui import stock_card as stock_card_module
 from ptrade_order_tool.ui.main_window import MainWindow, StatusLabel
 from ptrade_order_tool.ui.order_row import OrderRow
 from ptrade_order_tool.ui.styles import APP_STYLESHEET, _preferred_ui_font_family
@@ -154,6 +156,27 @@ def test_order_actions_do_not_show_transient_top_level_widgets(qtbot, sqlite_con
 
     assert recorder.shown == []
     assert recorder.parentless_windows == []
+
+
+def test_rebuilt_stock_cards_construct_children_with_parents(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+
+    def parent_required(widget_type):
+        class ParentRequired(widget_type):
+            def __init__(self, *args, parent=None, **kwargs):
+                assert parent is not None, f"{widget_type.__name__} was created without a parent"
+                super().__init__(*args, parent=parent, **kwargs)
+
+        return ParentRequired
+
+    for module, widget_names in (
+        (order_row_module, ("QWidget", "QComboBox", "QLabel", "QPushButton", "DigitInput")),
+        (stock_card_module, ("QWidget", "QLabel", "QPushButton", "MiniKLine", "EmbeddedOrderGroup", "OrderRow")),
+    ):
+        for widget_name in widget_names:
+            monkeypatch.setattr(module, widget_name, parent_required(getattr(module, widget_name)))
+
+    StockCard(draft.stocks[0], parent=QWidget())
 
 
 def test_locate_unconfirmed_button_jumps_to_first_pending_order(qtbot, sqlite_conn, tmp_path):

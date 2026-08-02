@@ -155,25 +155,25 @@ class StockCard(QFrame):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(5)
 
-        header_row = QWidget()
+        header_row = QWidget(parent=self)
         header_layout = QHBoxLayout(header_row)
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
-        self.header = QLabel(f"{stock.ts_code}  {stock.stock_name}")
+        self.header = QLabel(f"{stock.ts_code}  {stock.stock_name}", parent=header_row)
         self.header.setObjectName("stock_card_header")
-        self.type_badge = QLabel("持仓" if stock.is_holding else "开仓")
+        self.type_badge = QLabel("持仓" if stock.is_holding else "开仓", parent=header_row)
         self.type_badge.setObjectName("stock_type_badge")
         self.type_badge.setProperty("kind", "holding" if stock.is_holding else "opening")
         header_layout.addWidget(self.header)
         header_layout.addWidget(self.type_badge)
-        self.daily_quote_widget = self._make_daily_quote_widget(daily_quote)
+        self.daily_quote_widget = self._make_daily_quote_widget(daily_quote, parent=header_row)
         header_layout.addWidget(self.daily_quote_widget)
         header_layout.addStretch(1)
         layout.addWidget(header_row)
 
         if stock.holding:
             holding = stock.holding
-            metrics_row = QWidget()
+            metrics_row = QWidget(parent=self)
             metrics_layout = QHBoxLayout(metrics_row)
             metrics_layout.setContentsMargins(0, 0, 0, 0)
             metrics_layout.setSpacing(6)
@@ -183,7 +183,7 @@ class StockCard(QFrame):
                 ("成本", holding.cost_price, ""),
                 ("盈亏", holding.income_balance, ""),
             ):
-                metric = QLabel(f"{label} {_format_metric_value(label, value)}")
+                metric = QLabel(f"{label} {_format_metric_value(label, value)}", parent=metrics_row)
                 metric.setObjectName("stock_metric_chip")
                 if tone:
                     metric.setProperty("tone", tone)
@@ -197,12 +197,12 @@ class StockCard(QFrame):
 
         unconfirmed_count = sum(1 for order in stock.orders if not order.confirmed)
         if unconfirmed_count:
-            pending_badge = QLabel(f"{unconfirmed_count} 个待确认")
+            pending_badge = QLabel(f"{unconfirmed_count} 个待确认", parent=header_row)
             pending_badge.setObjectName("pending_order_badge")
             pending_badge.setAlignment(Qt.AlignCenter)
             pending_badge.setMinimumWidth(84)
             header_layout.addWidget(pending_badge)
-        self.delete_stock_button = QPushButton("删除")
+        self.delete_stock_button = QPushButton("删除", parent=header_row)
         self.delete_stock_button.setObjectName(f"delete_stock_{stock.ts_code}")
         self.delete_stock_button.setProperty("role", "delete_stock")
         self.delete_stock_button.setEnabled(not read_only)
@@ -213,13 +213,13 @@ class StockCard(QFrame):
 
         warning_texts = self._warning_texts(grouped)
         if warning_texts:
-            warning_box = QWidget()
+            warning_box = QWidget(parent=self)
             warning_box.setObjectName("stock_card_warning_box")
             warning_layout = QVBoxLayout(warning_box)
             warning_layout.setContentsMargins(8, 6, 8, 6)
             warning_layout.setSpacing(2)
             for text in warning_texts:
-                warning_label = QLabel(text)
+                warning_label = QLabel(text, parent=warning_box)
                 warning_label.setObjectName("stock_card_warning")
                 warning_layout.addWidget(warning_label)
             layout.addWidget(warning_box)
@@ -238,29 +238,29 @@ class StockCard(QFrame):
         }
         for order_type in ORDER_LABELS:
             _, compact_label = GROUP_META[order_type]
-            group_box = EmbeddedOrderGroup()
+            group_box = EmbeddedOrderGroup(parent=self)
             group_box.setObjectName(f"order_group_{order_type}")
             group_box.setProperty("side", GROUP_META[order_type][0])
             group_layout = QVBoxLayout(group_box)
             group_layout.setContentsMargins(6, 18, 6, 4)
             group_layout.setSpacing(3)
             orders = grouped.get(order_type, [])
-            group_header = QWidget()
+            group_header = QWidget(parent=group_box)
             group_header.setObjectName("order_group_header")
             group_header.setProperty("side", GROUP_META[order_type][0])
             group_header.setFixedHeight(22)
             group_header_layout = QHBoxLayout(group_header)
             group_header_layout.setContentsMargins(10, 0, 0, 0)
             group_header_layout.setSpacing(6)
-            title_wrap = QWidget()
+            title_wrap = QWidget(parent=group_header)
             title_wrap.setObjectName("order_group_title_wrap")
             title_wrap_layout = QHBoxLayout(title_wrap)
             title_wrap_layout.setContentsMargins(0, 0, 0, 0)
             title_wrap_layout.setSpacing(4)
-            title_label = QLabel(f"{compact_label}  {len(orders)}")
+            title_label = QLabel(f"{compact_label}  {len(orders)}", parent=title_wrap)
             title_label.setObjectName(f"order_group_title_{order_type}")
             title_label.setProperty("side", GROUP_META[order_type][0])
-            add_button = QPushButton("+")
+            add_button = QPushButton("+", parent=title_wrap)
             add_button.setObjectName(f"add_order_{order_type}_{stock.ts_code}")
             add_button.setProperty("role", "add_order")
             add_button.setEnabled(not read_only)
@@ -276,7 +276,7 @@ class StockCard(QFrame):
             group_box.set_collapsed_to_header(not orders)
             order_rows: list[OrderRow] = []
             for order in orders:
-                row = OrderRow(order, read_only=read_only)
+                row = OrderRow(order, parent=group_box, read_only=read_only)
                 row.confirmRequested.connect(self.confirmRequested)
                 row.deleteRequested.connect(self.deleteRequested)
                 row.changed.connect(self._handle_order_row_changed)
@@ -313,20 +313,20 @@ class StockCard(QFrame):
     def _handle_order_digit_width_changed(self, row: OrderRow) -> None:
         self.align_order_input_digits()
 
-    def _make_daily_quote_widget(self, quote: DailyQuote | None) -> QWidget:
-        widget = QWidget()
+    def _make_daily_quote_widget(self, quote: DailyQuote | None, *, parent: QWidget) -> QWidget:
+        widget = QWidget(parent=parent)
         widget.setObjectName("stock_daily_quote")
         widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.daily_price_label = QLabel("")
+        self.daily_price_label = QLabel("", parent=widget)
         self.daily_price_label.setObjectName("stock_daily_price")
-        self.daily_pct_label = QLabel("")
+        self.daily_pct_label = QLabel("", parent=widget)
         self.daily_pct_label.setObjectName("stock_daily_pct")
-        self.daily_amount_label = QLabel("")
+        self.daily_amount_label = QLabel("", parent=widget)
         self.daily_amount_label.setObjectName("stock_daily_amount")
-        self.daily_kline = MiniKLine(quote)
+        self.daily_kline = MiniKLine(quote, parent=widget)
         layout.addWidget(self.daily_price_label)
         layout.addWidget(self.daily_pct_label)
         layout.addWidget(self.daily_amount_label)

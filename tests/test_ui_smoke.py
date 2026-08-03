@@ -659,8 +659,15 @@ def test_date_combo_shows_weekday(qtbot, sqlite_conn):
     window.resize(900, 720)
     window.show()
     qtbot.waitExposed(window)
+    window.date_combo.setItemText(0, "20260225 周三 只读")
+    window.stock_jump_combo.addItem("300251.SZ 光线传媒测试")
+    window._refresh_navigation_combo_widths()
+    window.stock_nav_layout.activate()
+    qtbot.wait(10)
 
     assert window.date_combo.itemText(0).startswith("20260225 周三")
+    assert window.date_combo.width() == window.stock_jump_combo.width()
+    assert window.date_combo.width() >= window.fontMetrics().horizontalAdvance("20260225 周三 只读") + 48
     assert window.stock_nav_layout.indexOf(window.date_combo) == 0
     margins = window.stock_nav_layout.contentsMargins()
     assert margins.top() == 5
@@ -670,12 +677,13 @@ def test_date_combo_shows_weekday(qtbot, sqlite_conn):
     assert abs(window.tabs.geometry().center().y() - window.stock_nav_bar.rect().center().y()) <= 2
 
 
-def test_stock_jump_combo_lists_visible_stocks_and_jumps_to_card(qtbot, sqlite_conn, monkeypatch):
+def test_stock_jump_combo_lists_visible_stocks_and_positions_card_at_top(qtbot, sqlite_conn):
     draft = make_fixture_draft(sqlite_conn)
     window = MainWindow(draft)
     qtbot.addWidget(window)
-    captured = []
-    monkeypatch.setattr(window.stock_scroll, "ensureWidgetVisible", lambda widget: captured.append(widget.stock.ts_code))
+    window.resize(640, 360)
+    window.show()
+    qtbot.waitExposed(window)
 
     assert [window.stock_jump_combo.itemText(index) for index in range(window.stock_jump_combo.count())] == [
         "002153.SZ 石基信息",
@@ -683,9 +691,17 @@ def test_stock_jump_combo_lists_visible_stocks_and_jumps_to_card(qtbot, sqlite_c
         "300251.SZ 光线传媒",
     ]
 
-    window.stock_jump_combo.activated.emit(1)
+    horizontal_bar = window.stock_scroll.horizontalScrollBar()
+    vertical_bar = window.stock_scroll.verticalScrollBar()
+    window.stock_content.setMinimumWidth(window.stock_scroll.viewport().width() + 180)
+    qtbot.waitUntil(lambda: horizontal_bar.maximum() > 0 and vertical_bar.maximum() > 0)
+    horizontal_bar.setValue(horizontal_bar.maximum())
+    window.stock_jump_combo.activated.emit(2)
+    qtbot.wait(20)
 
-    assert captured == ["300162.SZ"]
+    card = window._stock_cards_by_code["300251.SZ"]
+    assert card.mapTo(window.stock_scroll.viewport(), QPoint(0, 0)).y() == 0
+    assert horizontal_bar.value() == horizontal_bar.minimum()
 
 
 def test_auto_update_runs_when_stock_data_missing(qtbot, monkeypatch):

@@ -78,9 +78,7 @@ class AutoWidthComboBox(QComboBox):
         self.view().setAttribute(Qt.WA_Hover, True)
 
     def showPopup(self):  # noqa: N802
-        width = self.width()
-        for index in range(self.count()):
-            width = max(width, self.fontMetrics().horizontalAdvance(self.itemText(index)) + 48)
+        width = max(self.width(), self.contents_width())
         self.view().setMinimumWidth(width)
         super().showPopup()
         popup = self.view().window()
@@ -94,6 +92,13 @@ class AutoWidthComboBox(QComboBox):
             popup_height=popup.height(),
             available=available,
         ))
+
+    def contents_width(self) -> int:
+        text_width = max(
+            [self.fontMetrics().horizontalAdvance(self.itemText(index)) for index in range(self.count())]
+            + [self.fontMetrics().horizontalAdvance("0" * self.minimumContentsLength())],
+        )
+        return text_width + 48
 
 
 class StockSearchLineEdit(QLineEdit):
@@ -665,6 +670,7 @@ class MainWindow(QMainWindow):
                 self.date_combo.setCurrentIndex(index)
                 self.date_combo.setItemText(index, self._date_combo_text(self.draft))
         self.date_combo.blockSignals(False)
+        self._refresh_navigation_combo_widths()
 
     def set_draft(
         self,
@@ -721,6 +727,7 @@ class MainWindow(QMainWindow):
         self._remember_order_input_widths()
         self._set_stock_area_updates_enabled(False)
         try:
+            self.stock_content.setMinimumHeight(0)
             self._stock_cards_by_code = {}
             self._clear_layout(self.stock_layout)
             if draft.stocks:
@@ -852,6 +859,7 @@ class MainWindow(QMainWindow):
     def _apply_stock_filter(self) -> None:
         if not hasattr(self, "stock_content"):
             return
+        self.stock_content.setMinimumHeight(0)
         filter_index = self.tabs.currentIndex()
         for card in self._stock_cards_by_code.values():
             if filter_index == 1:
@@ -871,6 +879,14 @@ class MainWindow(QMainWindow):
             self.stock_jump_combo.addItem(f"{card.stock.ts_code} {card.stock.stock_name}", card.stock.ts_code)
         self.stock_jump_combo.setEnabled(self.stock_jump_combo.count() > 0)
         self.stock_jump_combo.blockSignals(False)
+        self._refresh_navigation_combo_widths()
+
+    def _refresh_navigation_combo_widths(self) -> None:
+        if not hasattr(self, "date_combo") or not hasattr(self, "stock_jump_combo"):
+            return
+        width = max(self.date_combo.contents_width(), self.stock_jump_combo.contents_width())
+        self.date_combo.setFixedWidth(width)
+        self.stock_jump_combo.setFixedWidth(width)
 
     def _visible_stock_cards_in_order(self) -> list[StockCard]:
         if not self.draft:
@@ -888,8 +904,24 @@ class MainWindow(QMainWindow):
             return
         card = self._stock_cards_by_code.get(str(ts_code))
         if card:
-            self.stock_scroll.ensureWidgetVisible(card)
+            self._position_stock_card_at_viewport_top(card)
             self.status_label.setText(f"已定位: {card.stock.ts_code} {card.stock.stock_name}")
+
+    def _position_stock_card_at_viewport_top(self, card: StockCard) -> None:
+        self.stock_content.setMinimumHeight(0)
+        self.stock_layout.activate()
+        required_height = card.y() + self.stock_scroll.viewport().height()
+        self.stock_content.setMinimumHeight(max(self.stock_content.sizeHint().height(), required_height))
+        QTimer.singleShot(0, lambda ts_code=card.stock.ts_code: self._finish_stock_card_positioning(ts_code))
+
+    def _finish_stock_card_positioning(self, ts_code: str) -> None:
+        card = self._stock_cards_by_code.get(ts_code)
+        if card is None or card.isHidden():
+            return
+        vertical_bar = self.stock_scroll.verticalScrollBar()
+        horizontal_bar = self.stock_scroll.horizontalScrollBar()
+        vertical_bar.setValue(max(vertical_bar.minimum(), min(card.y(), vertical_bar.maximum())))
+        horizontal_bar.setValue(horizontal_bar.minimum())
 
     def _make_scroll_tab(self):
         scroll = QScrollArea()

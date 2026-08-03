@@ -2,7 +2,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QGroupBox, QLabel, QMessageBox, QWidget
 
 from ptrade_order_tool.ui import order_row as order_row_module
@@ -106,6 +106,53 @@ def test_order_add_confirm_delete_refreshes_only_affected_card(qtbot, sqlite_con
     assert full_render_calls == []
     assert window._stock_cards_by_code["300162.SZ"] is untouched_card
     assert popup is not None and not popup.isVisible()
+
+
+def test_order_changes_preserve_first_visible_stock_card_position(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    window.resize(900, 460)
+    window.show()
+    qtbot.waitExposed(window)
+
+    scroll_bar = window.stock_scroll.verticalScrollBar()
+    anchor_card = window._stock_cards_by_code["300162.SZ"]
+    qtbot.waitUntil(lambda: scroll_bar.maximum() > anchor_card.y())
+    scroll_bar.setValue(anchor_card.y())
+    qtbot.wait(10)
+    anchor_y_before = anchor_card.mapTo(window.stock_scroll.viewport(), QPoint(0, 0)).y()
+
+    add_order_button = window.findChild(type(window.export_button), "add_order_buy_limit_002153.SZ")
+    qtbot.mouseClick(add_order_button, Qt.LeftButton)
+    qtbot.wait(250)
+
+    anchor_y_after = window._stock_cards_by_code["300162.SZ"].mapTo(
+        window.stock_scroll.viewport(),
+        QPoint(0, 0),
+    ).y()
+    assert abs(anchor_y_after - anchor_y_before) <= 1
+
+    added_row = next(row for row in window.findChildren(OrderRow) if row.order.order_type == "buy_limit")
+    order_id = added_row.order.id
+    qtbot.mouseClick(added_row.confirm_button, Qt.LeftButton)
+    qtbot.wait(250)
+
+    anchor_y_after_confirm = window._stock_cards_by_code["300162.SZ"].mapTo(
+        window.stock_scroll.viewport(),
+        QPoint(0, 0),
+    ).y()
+    assert abs(anchor_y_after_confirm - anchor_y_before) <= 1
+
+    confirmed_row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+    qtbot.mouseClick(confirmed_row.delete_button, Qt.LeftButton)
+    qtbot.wait(250)
+
+    anchor_y_after_delete = window._stock_cards_by_code["300162.SZ"].mapTo(
+        window.stock_scroll.viewport(),
+        QPoint(0, 0),
+    ).y()
+    assert abs(anchor_y_after_delete - anchor_y_before) <= 1
 
 
 def test_order_actions_do_not_show_transient_top_level_widgets(qtbot, sqlite_conn, tmp_path):

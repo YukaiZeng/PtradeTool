@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
@@ -295,6 +295,7 @@ class MainWindow(QMainWindow):
         self._daily_quotes_date: str | None = None
         self._order_input_widths_by_id: dict[int, tuple[int, int]] = {}
         self._stock_cards_by_code: dict[str, StockCard] = {}
+        self._stock_scroll_animation: QPropertyAnimation | None = None
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -665,7 +666,14 @@ class MainWindow(QMainWindow):
                 self.date_combo.setItemText(index, self._date_combo_text(self.draft))
         self.date_combo.blockSignals(False)
 
-    def set_draft(self, draft: SessionDraft, *, default_to_holding: bool = False) -> None:
+    def set_draft(
+        self,
+        draft: SessionDraft,
+        *,
+        default_to_holding: bool = False,
+        preserve_stock_scroll_position: bool = False,
+    ) -> None:
+        scroll_anchor = self._capture_stock_scroll_anchor() if preserve_stock_scroll_position else None
         if self._daily_quotes_date != draft.manage_date:
             self._daily_quotes = {}
             self._daily_quotes_date = draft.manage_date
@@ -686,6 +694,7 @@ class MainWindow(QMainWindow):
         self._refresh_locate_unconfirmed_button()
         self._refresh_check_export_button()
         self._schedule_daily_quotes_update(draft)
+        self._restore_stock_scroll_anchor(scroll_anchor)
 
     def _refresh_account_labels(self, draft: SessionDraft) -> None:
         self.total_label.setText(f"账户总额 {self._format_money(draft.fund.portfolio_value)}")
@@ -951,6 +960,7 @@ class MainWindow(QMainWindow):
     def _refresh_after_single_stock_order_update(self, ts_code: str | None) -> None:
         if not self.draft:
             return
+        scroll_anchor = self._capture_stock_scroll_anchor()
         self._refresh_account_labels(self.draft)
         self._refresh_draft_summary()
         self.refresh_date_combo()
@@ -962,6 +972,49 @@ class MainWindow(QMainWindow):
         self.open_export_dir_action.setEnabled(bool(self.draft.export_json_path))
         self._refresh_locate_unconfirmed_button()
         self._refresh_check_export_button()
+        self._restore_stock_scroll_anchor(scroll_anchor)
+
+    def _capture_stock_scroll_anchor(self) -> tuple[str | None, int, int] | None:
+        if not hasattr(self, "stock_scroll"):
+            return None
+        scroll_bar = self.stock_scroll.verticalScrollBar()
+        viewport_top = self.stock_content.mapFrom(self.stock_scroll.viewport(), QPoint(0, 0)).y()
+        for card in self._visible_stock_cards_in_order():
+            if card.y() + card.height() > viewport_top:
+                return card.stock.ts_code, card.y() - viewport_top, scroll_bar.value()
+        return None, 0, scroll_bar.value()
+
+    def _restore_stock_scroll_anchor(self, anchor: tuple[str | None, int, int] | None) -> None:
+        if anchor is None:
+            return
+        QTimer.singleShot(0, lambda: self._restore_stock_scroll_anchor_after_layout(anchor))
+
+    def _restore_stock_scroll_anchor_after_layout(self, anchor: tuple[str | None, int, int]) -> None:
+        ts_code, offset, previous_value = anchor
+        scroll_bar = self.stock_scroll.verticalScrollBar()
+        card = self._stock_cards_by_code.get(ts_code) if ts_code else None
+        target_value = previous_value
+        if card is not None and not card.isHidden():
+            target_value = card.y() - offset
+        target_value = max(scroll_bar.minimum(), min(target_value, scroll_bar.maximum()))
+        if target_value == scroll_bar.value():
+            return
+        if self._stock_scroll_animation is not None:
+            self._stock_scroll_animation.stop()
+            self._stock_scroll_animation.deleteLater()
+        animation = QPropertyAnimation(scroll_bar, b"value", self)
+        animation.setDuration(160)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        animation.setStartValue(scroll_bar.value())
+        animation.setEndValue(target_value)
+        self._stock_scroll_animation = animation
+        animation.finished.connect(lambda: self._finish_stock_scroll_animation(animation))
+        animation.start()
+
+    def _finish_stock_scroll_animation(self, animation: QPropertyAnimation) -> None:
+        if self._stock_scroll_animation is animation:
+            self._stock_scroll_animation = None
+        animation.deleteLater()
 
     def _replace_stock_card(self, ts_code: str) -> bool:
         if not self.draft:
@@ -1162,7 +1215,7 @@ class MainWindow(QMainWindow):
     def _handle_order_type_change(self, row: OrderRow) -> None:
         self._handle_order_change(row)
         if self.draft:
-            self.set_draft(self.draft)
+            self.set_draft(self.draft, preserve_stock_scroll_position=True)
 
     def _handle_order_delete(self, row: OrderRow) -> None:
         if self.draft and self.draft.read_only:
@@ -1197,7 +1250,7 @@ class MainWindow(QMainWindow):
         self.draft, self._last_deleted_snapshot = self.service.delete_stock_with_snapshot(self.draft.manage_date, stock.ts_code)
         self.undo_delete_button.setEnabled(True)
         self.status_label.setText("股票已删除")
-        self.set_draft(self.draft)
+        self.set_draft(self.draft, preserve_stock_scroll_position=True)
 
     def _handle_add_order(self, stock, order_type: str) -> None:
         if self.draft and self.draft.read_only:
@@ -1557,7 +1610,7 @@ class MainWindow(QMainWindow):
         self._last_deleted_snapshot = None
         self.undo_delete_button.setEnabled(False)
         self.status_label.setText("已撤销删除")
-        self.set_draft(self.draft)
+        self.set_draft(self.draft, preserve_stock_scroll_position=True)
 
     def _handle_locate_unconfirmed(self) -> None:
         if not self.draft:

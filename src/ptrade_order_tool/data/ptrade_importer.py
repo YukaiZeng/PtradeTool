@@ -52,12 +52,17 @@ def parse_ptrade_json(path: Path, stock_matcher: StockMatcher) -> ImportedPtrade
         if not stock_row:
             continue
 
+        current_amount = _int_amount(raw_holding.get("current_amount"), f"Hold.{raw_key}.current_amount")
+        enable_amount = _int_amount(raw_holding.get("enable_amount"), f"Hold.{raw_key}.enable_amount")
+        if current_amount == 0:
+            continue
+
         holding = Holding(
             ts_code=str(stock_row["ts_code"]),
             stock_code=stock_code,
             stock_name=str(raw_holding.get("stock_name") or stock_row["name"]),
-            current_amount=_int_amount(raw_holding.get("current_amount"), f"Hold.{raw_key}.current_amount"),
-            enable_amount=_int_amount(raw_holding.get("enable_amount"), f"Hold.{raw_key}.enable_amount"),
+            current_amount=current_amount,
+            enable_amount=enable_amount,
             last_price=_decimal_value(raw_holding.get("last_price", 0)),
             cost_price=_decimal_value(raw_holding.get("cost_price", 0)),
             market_value=market_value,

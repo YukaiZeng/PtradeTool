@@ -64,6 +64,95 @@ def test_inherited_sell_orders_keep_previous_order_shares(sqlite_conn, tmp_path)
     ]
 
 
+def test_create_draft_does_not_inherit_sell_orders_for_zero_current_amount(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    imported = create_imported()
+    zero_holding = next(holding for holding in imported.holdings if holding.ts_code == "002153.SZ")
+    zero_holding.current_amount = 0
+    zero_holding.enable_amount = 0
+    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path.write_text(
+        '{"002153.SZ": {"sell_profit": [{"price": 12.65, "shares": 2800}], "sell_loss": [{"price": 10.99, "shares": 2800}]}}',
+        encoding="utf-8",
+    )
+
+    draft = store.create_draft(
+        imported,
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+        previous_order_path=previous_order_path,
+    )
+
+    assert "002153.SZ" not in {stock.ts_code for stock in draft.stocks}
+    assert sqlite_conn.execute(
+        "select count(*) from orders where manage_date = ? and ts_code = ?",
+        (draft.manage_date, "002153.SZ"),
+    ).fetchone()[0] == 0
+
+
+def test_sync_fund_and_holdings_removes_inherited_sell_orders_for_closed_positions(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path.write_text(
+        '{"002153.SZ": {"sell_profit": [{"price": 12.65, "shares": 2800}]}}',
+        encoding="utf-8",
+    )
+    store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+        previous_order_path=previous_order_path,
+    )
+    imported = create_imported()
+    zero_holding = next(holding for holding in imported.holdings if holding.ts_code == "002153.SZ")
+    zero_holding.current_amount = 0
+    zero_holding.enable_amount = 0
+
+    store.sync_fund_and_holdings(
+        imported,
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+    )
+
+    draft = store.load_draft("20260225")
+    assert "002153.SZ" not in {stock.ts_code for stock in draft.stocks}
+    assert sqlite_conn.execute(
+        "select count(*) from orders where manage_date = ? and ts_code = ?",
+        (draft.manage_date, "002153.SZ"),
+    ).fetchone()[0] == 0
+
+
+def test_load_draft_hides_legacy_inherited_sell_orders_for_zero_current_amount(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path.write_text(
+        '{"002153.SZ": {"sell_loss": [{"price": 10.99, "shares": 2800}]}}',
+        encoding="utf-8",
+    )
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/20260225.json",
+        previous_order_path=previous_order_path,
+    )
+    sqlite_conn.execute(
+        "update holdings set current_amount = 0, enable_amount = 0 where manage_date = ? and ts_code = ?",
+        (draft.manage_date, "002153.SZ"),
+    )
+    sqlite_conn.commit()
+
+    reloaded = store.load_draft(draft.manage_date)
+
+    assert "002153.SZ" not in {stock.ts_code for stock in reloaded.stocks}
+
+
 def test_inherited_sell_orders_stop_at_nearest_effective_stock_day(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)

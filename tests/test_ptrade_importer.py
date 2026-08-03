@@ -67,6 +67,18 @@ def test_parse_ptrade_json_filters_non_stock_assets():
     assert all(holding.stock_name != "标准券" for holding in result.holdings)
 
 
+def test_parse_ptrade_json_excludes_zero_current_amount_holdings(tmp_path):
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    data["Hold"]["002153.SZ"]["current_amount"] = 0
+    data["Hold"]["002153.SZ"]["enable_amount"] = 0
+    path = tmp_path / "20260225.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = parse_ptrade_json(path, FakeStockMatcher())
+
+    assert "002153.SZ" not in {holding.ts_code for holding in result.holdings}
+
+
 def test_parse_ptrade_json_falls_back_to_ptrade_stock_fields_when_stock_cache_empty():
     result = parse_ptrade_json(FIXTURE, EmptyStockMatcher())
 

@@ -59,15 +59,16 @@ class DraftStore:
                     now,
                 ),
             )
+            active_holdings = [holding for holding in imported.holdings if holding.current_amount > 0]
             self._insert_fund(imported.manage_date, imported.fund)
-            for holding in imported.holdings:
+            for holding in active_holdings:
                 self._insert_holding(imported.manage_date, holding)
 
             inherited_orders = self._load_inherited_sell_orders(
                 previous_order_path,
-                ts_codes={holding.ts_code for holding in imported.holdings},
+                ts_codes={holding.ts_code for holding in active_holdings},
             )
-            for holding in imported.holdings:
+            for holding in active_holdings:
                 for order in inherited_orders.get(holding.ts_code, []):
                     self._add_order_without_commit(
                         imported.manage_date,
@@ -116,12 +117,20 @@ class DraftStore:
             next_trade_available_cash=calculate_next_trade_available_cash(portfolio_value, stock_positions_value),
         )
 
-        holdings = {
+        all_holdings = {
             row["ts_code"]: self._holding_from_row(row)
             for row in self.conn.execute(
                 "select * from holdings where manage_date = ? order by ts_code",
                 (manage_date,),
             ).fetchall()
+        }
+        closed_holding_codes = {
+            ts_code for ts_code, holding in all_holdings.items() if holding.current_amount == 0
+        }
+        holdings = {
+            ts_code: holding
+            for ts_code, holding in all_holdings.items()
+            if holding.current_amount > 0
         }
         orders_by_stock: dict[str, list[OrderDraft]] = {ts_code: [] for ts_code in holdings}
         stock_names_by_stock: dict[str, str] = {}
@@ -129,6 +138,12 @@ class DraftStore:
             "select * from orders where manage_date = ? order by ts_code, sort_order, id",
             (manage_date,),
         ).fetchall():
+            if (
+                row["ts_code"] in closed_holding_codes
+                and row["source"] == "inherited"
+                and row["order_type"] in {"sell_profit", "sell_loss"}
+            ):
+                continue
             orders_by_stock.setdefault(row["ts_code"], []).append(self._order_from_row(row))
             stock_names_by_stock[row["ts_code"]] = row["stock_name"]
 
@@ -309,9 +324,25 @@ class DraftStore:
                         now,
                     ),
                 )
+            active_holdings = [holding for holding in imported.holdings if holding.current_amount > 0]
             self._insert_fund(imported.manage_date, imported.fund)
-            for holding in imported.holdings:
+            for holding in active_holdings:
                 self._insert_holding(imported.manage_date, holding)
+            self.conn.execute(
+                """
+                delete from orders
+                where manage_date = ?
+                    and source = 'inherited'
+                    and order_type in ('sell_profit', 'sell_loss')
+                    and not exists (
+                        select 1
+                        from holdings
+                        where holdings.manage_date = orders.manage_date
+                            and holdings.ts_code = orders.ts_code
+                    )
+                """,
+                (imported.manage_date,),
+            )
             self._mark_modified(imported.manage_date)
             self.conn.commit()
         except Exception:

@@ -694,7 +694,10 @@ class MainWindow(QMainWindow):
         self._refresh_tab_titles()
         if default_to_holding:
             self.tabs.setCurrentIndex(2)
-        self._apply_stock_filter(preserve_scroll_padding=scroll_anchor is not None)
+        self._apply_stock_filter(
+            preserve_scroll_padding=scroll_anchor is not None,
+            select_first_when_selection_is_absent=not preserve_stock_scroll_position,
+        )
         self._apply_read_only_state()
         self.open_export_dir_action.setEnabled(bool(draft.export_json_path))
         self._refresh_sync_json_action()
@@ -858,7 +861,12 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, f"开仓 {opening}")
         self.tabs.setTabText(2, f"持仓 {holding}")
 
-    def _apply_stock_filter(self, *, preserve_scroll_padding: bool = False) -> None:
+    def _apply_stock_filter(
+        self,
+        *,
+        preserve_scroll_padding: bool = False,
+        select_first_when_selection_is_absent: bool = False,
+    ) -> None:
         if not hasattr(self, "stock_content"):
             return
         if not preserve_scroll_padding:
@@ -871,9 +879,11 @@ class MainWindow(QMainWindow):
                 card.setVisible(card.stock.is_holding)
             else:
                 card.setVisible(True)
-        self._refresh_stock_jump_combo()
+        self._refresh_stock_jump_combo(
+            select_first_when_selection_is_absent=select_first_when_selection_is_absent,
+        )
 
-    def _refresh_stock_jump_combo(self) -> None:
+    def _refresh_stock_jump_combo(self, *, select_first_when_selection_is_absent: bool = False) -> None:
         if not hasattr(self, "stock_jump_combo"):
             return
         selected_ts_code = self.stock_jump_combo.currentData(Qt.UserRole)
@@ -883,7 +893,9 @@ class MainWindow(QMainWindow):
         for card in self._visible_stock_cards_in_order():
             self.stock_jump_combo.addItem(f"{card.stock.ts_code} {card.stock.stock_name}", card.stock.ts_code)
         selected_index = self.stock_jump_combo.findData(selected_ts_code, Qt.UserRole)
-        if selected_index < 0 and not had_items and self.stock_jump_combo.count():
+        if selected_index < 0 and self.stock_jump_combo.count() and (
+            not had_items or select_first_when_selection_is_absent
+        ):
             selected_index = 0
         self.stock_jump_combo.setCurrentIndex(selected_index)
         self.stock_jump_combo.setEnabled(self.stock_jump_combo.count() > 0)

@@ -197,6 +197,19 @@ def test_deleting_selected_stock_keeps_viewport_and_clears_stock_jump_selection(
     assert scroll_values == []
 
 
+def test_switching_draft_defaults_stock_jump_to_first_visible_stock_when_selection_is_absent(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+
+    window.stock_jump_combo.setCurrentIndex(1)
+    replacement_draft, _ = service.delete_stock_with_snapshot(draft.manage_date, "300162.SZ")
+    window.set_draft(replacement_draft, default_to_holding=True)
+
+    assert window.stock_jump_combo.currentIndex() == 0
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "002153.SZ"
+
+
 def test_order_actions_do_not_show_transient_top_level_widgets(qtbot, sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     window = MainWindow(draft, service)

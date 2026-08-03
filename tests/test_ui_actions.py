@@ -108,7 +108,7 @@ def test_order_add_confirm_delete_refreshes_only_affected_card(qtbot, sqlite_con
     assert popup is not None and not popup.isVisible()
 
 
-def test_order_changes_preserve_first_visible_stock_card_position(qtbot, sqlite_conn, tmp_path):
+def test_order_changes_preserve_selected_stock_card_position(qtbot, sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     window = MainWindow(draft, service)
     qtbot.addWidget(window)
@@ -116,14 +116,14 @@ def test_order_changes_preserve_first_visible_stock_card_position(qtbot, sqlite_
     window.show()
     qtbot.waitExposed(window)
 
-    scroll_bar = window.stock_scroll.verticalScrollBar()
-    anchor_card = window._stock_cards_by_code["300162.SZ"]
-    qtbot.waitUntil(lambda: scroll_bar.maximum() > anchor_card.y())
-    scroll_bar.setValue(anchor_card.y())
-    qtbot.wait(10)
-    anchor_y_before = anchor_card.mapTo(window.stock_scroll.viewport(), QPoint(0, 0)).y()
+    window.stock_jump_combo.setCurrentIndex(1)
+    window.stock_jump_combo.activated.emit(1)
+    qtbot.wait(20)
+    selected_card = window._stock_cards_by_code["300162.SZ"]
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
+    assert selected_card.mapTo(window.stock_scroll.viewport(), QPoint(0, 0)).y() == 0
 
-    add_order_button = window.findChild(type(window.export_button), "add_order_buy_limit_002153.SZ")
+    add_order_button = window.findChild(type(window.export_button), "add_order_buy_limit_300162.SZ")
     qtbot.mouseClick(add_order_button, Qt.LeftButton)
     qtbot.wait(250)
 
@@ -131,7 +131,8 @@ def test_order_changes_preserve_first_visible_stock_card_position(qtbot, sqlite_
         window.stock_scroll.viewport(),
         QPoint(0, 0),
     ).y()
-    assert abs(anchor_y_after - anchor_y_before) <= 1
+    assert anchor_y_after == 0
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
 
     added_row = next(row for row in window.findChildren(OrderRow) if row.order.order_type == "buy_limit")
     order_id = added_row.order.id
@@ -142,7 +143,8 @@ def test_order_changes_preserve_first_visible_stock_card_position(qtbot, sqlite_
         window.stock_scroll.viewport(),
         QPoint(0, 0),
     ).y()
-    assert abs(anchor_y_after_confirm - anchor_y_before) <= 1
+    assert anchor_y_after_confirm == 0
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
 
     confirmed_row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
     qtbot.mouseClick(confirmed_row.delete_button, Qt.LeftButton)
@@ -152,7 +154,47 @@ def test_order_changes_preserve_first_visible_stock_card_position(qtbot, sqlite_
         window.stock_scroll.viewport(),
         QPoint(0, 0),
     ).y()
-    assert abs(anchor_y_after_delete - anchor_y_before) <= 1
+    assert anchor_y_after_delete == 0
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
+
+
+def test_deleting_selected_stock_keeps_viewport_and_clears_stock_jump_selection(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    window.resize(900, 460)
+    window.show()
+    qtbot.waitExposed(window)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+
+    window.stock_jump_combo.setCurrentIndex(2)
+    window.stock_jump_combo.activated.emit(2)
+    qtbot.wait(20)
+    scroll_bar = window.stock_scroll.verticalScrollBar()
+    scroll_value_before = scroll_bar.value()
+    scroll_values = []
+    scroll_bar.valueChanged.connect(scroll_values.append)
+    selected_card = window._stock_cards_by_code["300251.SZ"]
+    qtbot.mouseClick(selected_card.delete_stock_button, Qt.LeftButton)
+    qtbot.wait(250)
+
+    assert window.stock_jump_combo.currentIndex() == -1
+    assert [window.stock_jump_combo.itemData(index, Qt.UserRole) for index in range(window.stock_jump_combo.count())] == [
+        "002153.SZ",
+        "300162.SZ",
+    ]
+    assert scroll_bar.value() == scroll_value_before
+    assert scroll_values == []
+
+    remaining_card = window._stock_cards_by_code["300162.SZ"]
+    scroll_bar.setValue(remaining_card.y())
+    scroll_value_before = scroll_bar.value()
+    scroll_values.clear()
+    qtbot.mouseClick(window.findChild(type(window.export_button), "add_order_buy_limit_300162.SZ"), Qt.LeftButton)
+    qtbot.wait(250)
+
+    assert scroll_bar.value() == scroll_value_before
+    assert scroll_values == []
 
 
 def test_order_actions_do_not_show_transient_top_level_widgets(qtbot, sqlite_conn, tmp_path):

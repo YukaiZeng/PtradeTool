@@ -680,6 +680,7 @@ class MainWindow(QMainWindow):
         preserve_stock_scroll_position: bool = False,
     ) -> None:
         scroll_anchor = self._capture_stock_scroll_anchor() if preserve_stock_scroll_position else None
+        self._reserve_stock_scroll_range(scroll_anchor)
         if self._daily_quotes_date != draft.manage_date:
             self._daily_quotes = {}
             self._daily_quotes_date = draft.manage_date
@@ -688,12 +689,12 @@ class MainWindow(QMainWindow):
         self._refresh_draft_summary()
         self.refresh_date_combo()
 
-        self._render_stock_cards_or_empty(draft)
+        self._render_stock_cards_or_empty(draft, preserve_scroll_padding=scroll_anchor is not None)
 
         self._refresh_tab_titles()
         if default_to_holding:
             self.tabs.setCurrentIndex(2)
-        self._apply_stock_filter()
+        self._apply_stock_filter(preserve_scroll_padding=scroll_anchor is not None)
         self._apply_read_only_state()
         self.open_export_dir_action.setEnabled(bool(draft.export_json_path))
         self._refresh_sync_json_action()
@@ -723,11 +724,12 @@ class MainWindow(QMainWindow):
         self.stock_layout.addWidget(self._make_empty_state_label(read_only=False))
         self.stock_layout.addStretch(1)
 
-    def _render_stock_cards_or_empty(self, draft: SessionDraft) -> None:
+    def _render_stock_cards_or_empty(self, draft: SessionDraft, *, preserve_scroll_padding: bool = False) -> None:
         self._remember_order_input_widths()
         self._set_stock_area_updates_enabled(False)
         try:
-            self.stock_content.setMinimumHeight(0)
+            if not preserve_scroll_padding:
+                self.stock_content.setMinimumHeight(0)
             self._stock_cards_by_code = {}
             self._clear_layout(self.stock_layout)
             if draft.stocks:
@@ -856,10 +858,11 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, f"开仓 {opening}")
         self.tabs.setTabText(2, f"持仓 {holding}")
 
-    def _apply_stock_filter(self) -> None:
+    def _apply_stock_filter(self, *, preserve_scroll_padding: bool = False) -> None:
         if not hasattr(self, "stock_content"):
             return
-        self.stock_content.setMinimumHeight(0)
+        if not preserve_scroll_padding:
+            self.stock_content.setMinimumHeight(0)
         filter_index = self.tabs.currentIndex()
         for card in self._stock_cards_by_code.values():
             if filter_index == 1:
@@ -873,10 +876,16 @@ class MainWindow(QMainWindow):
     def _refresh_stock_jump_combo(self) -> None:
         if not hasattr(self, "stock_jump_combo"):
             return
+        selected_ts_code = self.stock_jump_combo.currentData(Qt.UserRole)
+        had_items = self.stock_jump_combo.count() > 0
         self.stock_jump_combo.blockSignals(True)
         self.stock_jump_combo.clear()
         for card in self._visible_stock_cards_in_order():
             self.stock_jump_combo.addItem(f"{card.stock.ts_code} {card.stock.stock_name}", card.stock.ts_code)
+        selected_index = self.stock_jump_combo.findData(selected_ts_code, Qt.UserRole)
+        if selected_index < 0 and not had_items and self.stock_jump_combo.count():
+            selected_index = 0
+        self.stock_jump_combo.setCurrentIndex(selected_index)
         self.stock_jump_combo.setEnabled(self.stock_jump_combo.count() > 0)
         self.stock_jump_combo.blockSignals(False)
         self._refresh_navigation_combo_widths()
@@ -993,13 +1002,14 @@ class MainWindow(QMainWindow):
         if not self.draft:
             return
         scroll_anchor = self._capture_stock_scroll_anchor()
+        self._reserve_stock_scroll_range(scroll_anchor)
         self._refresh_account_labels(self.draft)
         self._refresh_draft_summary()
         self.refresh_date_combo()
         if not ts_code or not self._replace_stock_card(ts_code):
-            self._render_stock_cards_or_empty(self.draft)
+            self._render_stock_cards_or_empty(self.draft, preserve_scroll_padding=scroll_anchor is not None)
         self._refresh_tab_titles()
-        self._apply_stock_filter()
+        self._apply_stock_filter(preserve_scroll_padding=scroll_anchor is not None)
         self._apply_read_only_state()
         self.open_export_dir_action.setEnabled(bool(self.draft.export_json_path))
         self._refresh_locate_unconfirmed_button()
@@ -1021,14 +1031,31 @@ class MainWindow(QMainWindow):
             return
         QTimer.singleShot(0, lambda: self._restore_stock_scroll_anchor_after_layout(anchor))
 
+    def _reserve_stock_scroll_range(self, anchor: tuple[str | None, int, int] | None) -> None:
+        if anchor is None:
+            return
+        previous_value = anchor[2]
+        required_height = previous_value + self.stock_scroll.height()
+        if required_height > self.stock_content.minimumHeight():
+            self.stock_content.setMinimumHeight(required_height)
+
     def _restore_stock_scroll_anchor_after_layout(self, anchor: tuple[str | None, int, int]) -> None:
         ts_code, offset, previous_value = anchor
         scroll_bar = self.stock_scroll.verticalScrollBar()
         card = self._stock_cards_by_code.get(ts_code) if ts_code else None
-        target_value = previous_value
+        desired_value = previous_value
         if card is not None and not card.isHidden():
-            target_value = card.y() - offset
-        target_value = max(scroll_bar.minimum(), min(target_value, scroll_bar.maximum()))
+            desired_value = card.y() - offset
+        desired_value = max(scroll_bar.minimum(), desired_value)
+        required_height = desired_value + self.stock_scroll.height()
+        if required_height > self.stock_content.minimumHeight():
+            self.stock_content.setMinimumHeight(required_height)
+            QTimer.singleShot(0, lambda: self._restore_stock_scroll_anchor_after_layout(anchor))
+            return
+        target_value = min(desired_value, scroll_bar.maximum())
+        if card is None:
+            scroll_bar.setValue(target_value)
+            return
         if target_value == scroll_bar.value():
             return
         if self._stock_scroll_animation is not None:

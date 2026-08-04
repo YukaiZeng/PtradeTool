@@ -78,6 +78,26 @@ def test_stock_update_worker_prepares_stock_rows_outside_ui_thread(monkeypatch):
     assert captured[0][2][0] == ("600000.SH", "600000", "浦发银行", "pufayinhang", "pfyh", "L", "20260609")
 
 
+def test_stock_update_worker_uses_default_timeout_for_full_stock_basic_response(monkeypatch):
+    created_timeouts = []
+
+    class FakeClient:
+        def __init__(self, _token, timeout=30):
+            created_timeouts.append(timeout)
+
+        def query(self, api_name, **_kwargs):
+            if api_name == "trade_cal":
+                return []
+            return []
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.TushareProClient", FakeClient)
+    worker = StockUpdateWorker("token", "20260609", "20260101", "20271231")
+
+    worker.run()
+
+    assert created_timeouts == [30]
+
+
 def test_stock_update_result_uses_worker_date_for_persistence():
     captured = []
 

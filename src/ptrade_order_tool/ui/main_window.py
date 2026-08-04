@@ -222,7 +222,7 @@ class StockUpdateWorker(QThread):
 
     def run(self) -> None:
         try:
-            client = TushareProClient(self.token, timeout=5)
+            client = TushareProClient(self.token)
             calendar_rows = client.query(
                 "trade_cal",
                 start_date=self.calendar_start_date,

@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
@@ -300,7 +300,6 @@ class MainWindow(QMainWindow):
         self._daily_quotes_date: str | None = None
         self._order_input_widths_by_id: dict[int, tuple[int, int]] = {}
         self._stock_cards_by_code: dict[str, StockCard] = {}
-        self._stock_scroll_animation: QPropertyAnimation | None = None
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -680,7 +679,6 @@ class MainWindow(QMainWindow):
         preserve_stock_scroll_position: bool = False,
     ) -> None:
         scroll_anchor = self._capture_stock_scroll_anchor() if preserve_stock_scroll_position else None
-        self._reserve_stock_scroll_range(scroll_anchor)
         if self._daily_quotes_date != draft.manage_date:
             self._daily_quotes = {}
             self._daily_quotes_date = draft.manage_date
@@ -689,15 +687,12 @@ class MainWindow(QMainWindow):
         self._refresh_draft_summary()
         self.refresh_date_combo()
 
-        self._render_stock_cards_or_empty(draft, preserve_scroll_padding=scroll_anchor is not None)
+        self._render_stock_cards_or_empty(draft)
 
         self._refresh_tab_titles()
         if default_to_holding:
             self.tabs.setCurrentIndex(2)
-        self._apply_stock_filter(
-            preserve_scroll_padding=scroll_anchor is not None,
-            select_first_when_selection_is_absent=not preserve_stock_scroll_position,
-        )
+        self._apply_stock_filter(select_first_when_selection_is_absent=not preserve_stock_scroll_position)
         self._apply_read_only_state()
         self.open_export_dir_action.setEnabled(bool(draft.export_json_path))
         self._refresh_sync_json_action()
@@ -727,12 +722,11 @@ class MainWindow(QMainWindow):
         self.stock_layout.addWidget(self._make_empty_state_label(read_only=False))
         self.stock_layout.addStretch(1)
 
-    def _render_stock_cards_or_empty(self, draft: SessionDraft, *, preserve_scroll_padding: bool = False) -> None:
+    def _render_stock_cards_or_empty(self, draft: SessionDraft) -> None:
         self._remember_order_input_widths()
         self._set_stock_area_updates_enabled(False)
         try:
-            if not preserve_scroll_padding:
-                self.stock_content.setMinimumHeight(0)
+            self.stock_content.setMinimumHeight(0)
             self._stock_cards_by_code = {}
             self._clear_layout(self.stock_layout)
             if draft.stocks:
@@ -864,13 +858,11 @@ class MainWindow(QMainWindow):
     def _apply_stock_filter(
         self,
         *,
-        preserve_scroll_padding: bool = False,
         select_first_when_selection_is_absent: bool = False,
     ) -> None:
         if not hasattr(self, "stock_content"):
             return
-        if not preserve_scroll_padding:
-            self.stock_content.setMinimumHeight(0)
+        self.stock_content.setMinimumHeight(0)
         filter_index = self.tabs.currentIndex()
         for card in self._stock_cards_by_code.values():
             if filter_index == 1:
@@ -929,10 +921,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"已定位: {card.stock.ts_code} {card.stock.stock_name}")
 
     def _position_stock_card_at_viewport_top(self, card: StockCard) -> None:
-        self.stock_content.setMinimumHeight(0)
         self.stock_layout.activate()
-        required_height = card.y() + self.stock_scroll.viewport().height()
-        self.stock_content.setMinimumHeight(max(self.stock_content.sizeHint().height(), required_height))
         QTimer.singleShot(0, lambda ts_code=card.stock.ts_code: self._finish_stock_card_positioning(ts_code))
 
     def _finish_stock_card_positioning(self, ts_code: str) -> None:
@@ -1010,23 +999,27 @@ class MainWindow(QMainWindow):
                 return stock.ts_code
         return None
 
-    def _refresh_after_single_stock_order_update(self, ts_code: str | None) -> None:
+    def _refresh_after_single_stock_order_update(
+        self,
+        ts_code: str | None,
+        *,
+        new_order_id: int | None = None,
+    ) -> None:
         if not self.draft:
             return
         scroll_anchor = self._capture_stock_scroll_anchor()
-        self._reserve_stock_scroll_range(scroll_anchor)
         self._refresh_account_labels(self.draft)
         self._refresh_draft_summary()
         self.refresh_date_combo()
         if not ts_code or not self._replace_stock_card(ts_code):
-            self._render_stock_cards_or_empty(self.draft, preserve_scroll_padding=scroll_anchor is not None)
+            self._render_stock_cards_or_empty(self.draft)
         self._refresh_tab_titles()
-        self._apply_stock_filter(preserve_scroll_padding=scroll_anchor is not None)
+        self._apply_stock_filter()
         self._apply_read_only_state()
         self.open_export_dir_action.setEnabled(bool(self.draft.export_json_path))
         self._refresh_locate_unconfirmed_button()
         self._refresh_check_export_button()
-        self._restore_stock_scroll_anchor(scroll_anchor)
+        self._restore_stock_scroll_anchor(scroll_anchor, new_order_id)
 
     def _capture_stock_scroll_anchor(self) -> tuple[str | None, int, int] | None:
         if not hasattr(self, "stock_scroll"):
@@ -1038,54 +1031,48 @@ class MainWindow(QMainWindow):
                 return card.stock.ts_code, card.y() - viewport_top, scroll_bar.value()
         return None, 0, scroll_bar.value()
 
-    def _restore_stock_scroll_anchor(self, anchor: tuple[str | None, int, int] | None) -> None:
+    def _restore_stock_scroll_anchor(
+        self,
+        anchor: tuple[str | None, int, int] | None,
+        new_order_id: int | None = None,
+    ) -> None:
         if anchor is None:
+            if new_order_id is not None:
+                QTimer.singleShot(0, lambda: self._focus_new_order(new_order_id))
             return
-        QTimer.singleShot(0, lambda: self._restore_stock_scroll_anchor_after_layout(anchor))
+        QTimer.singleShot(0, lambda: self._restore_stock_scroll_anchor_after_layout(anchor, new_order_id))
 
-    def _reserve_stock_scroll_range(self, anchor: tuple[str | None, int, int] | None) -> None:
-        if anchor is None:
-            return
-        previous_value = anchor[2]
-        required_height = previous_value + self.stock_scroll.height()
-        if required_height > self.stock_content.minimumHeight():
-            self.stock_content.setMinimumHeight(required_height)
-
-    def _restore_stock_scroll_anchor_after_layout(self, anchor: tuple[str | None, int, int]) -> None:
+    def _restore_stock_scroll_anchor_after_layout(
+        self,
+        anchor: tuple[str | None, int, int],
+        new_order_id: int | None = None,
+    ) -> None:
+        self.stock_layout.activate()
         ts_code, offset, previous_value = anchor
         scroll_bar = self.stock_scroll.verticalScrollBar()
         card = self._stock_cards_by_code.get(ts_code) if ts_code else None
         desired_value = previous_value
         if card is not None and not card.isHidden():
             desired_value = card.y() - offset
-        desired_value = max(scroll_bar.minimum(), desired_value)
-        required_height = desired_value + self.stock_scroll.height()
-        if required_height > self.stock_content.minimumHeight():
-            self.stock_content.setMinimumHeight(required_height)
-            QTimer.singleShot(0, lambda: self._restore_stock_scroll_anchor_after_layout(anchor))
-            return
-        target_value = min(desired_value, scroll_bar.maximum())
-        if card is None:
-            scroll_bar.setValue(target_value)
-            return
-        if target_value == scroll_bar.value():
-            return
-        if self._stock_scroll_animation is not None:
-            self._stock_scroll_animation.stop()
-            self._stock_scroll_animation.deleteLater()
-        animation = QPropertyAnimation(scroll_bar, b"value", self)
-        animation.setDuration(160)
-        animation.setEasingCurve(QEasingCurve.OutCubic)
-        animation.setStartValue(scroll_bar.value())
-        animation.setEndValue(target_value)
-        self._stock_scroll_animation = animation
-        animation.finished.connect(lambda: self._finish_stock_scroll_animation(animation))
-        animation.start()
+        target_value = max(scroll_bar.minimum(), min(desired_value, scroll_bar.maximum()))
+        scroll_bar.setValue(target_value)
+        if new_order_id is not None:
+            self._focus_new_order(new_order_id)
 
-    def _finish_stock_scroll_animation(self, animation: QPropertyAnimation) -> None:
-        if self._stock_scroll_animation is animation:
-            self._stock_scroll_animation = None
-        animation.deleteLater()
+    def _focus_new_order(self, order_id: int) -> None:
+        row = next(
+            (row for row in self.stock_content.findChildren(OrderRow) if row.order.id == order_id),
+            None,
+        )
+        if row is None or row.isHidden():
+            return
+        self._clear_active_digit_cursor()
+        viewport = self.stock_scroll.viewport()
+        top_left = row.mapTo(viewport, row.rect().topLeft())
+        bottom_right = row.mapTo(viewport, row.rect().bottomRight())
+        if top_left.y() < 0 or bottom_right.y() > viewport.height():
+            self.stock_scroll.ensureWidgetVisible(row, 0, 8)
+        row.focus_price_start()
 
     def _replace_stock_card(self, ts_code: str) -> bool:
         if not self.draft:
@@ -1240,10 +1227,20 @@ class MainWindow(QMainWindow):
                 self._dispose_widget(widget)
 
     def _dispose_widget(self, widget: QWidget) -> None:
+        self._clear_active_digit_cursor()
         for digit_input in widget.findChildren(DigitInput):
             digit_input.clear_cursor()
         widget.hide()
         widget.deleteLater()
+
+    def _clear_active_digit_cursor(self) -> None:
+        active_input = DigitInput._active_cursor_input
+        if active_input is None:
+            return
+        try:
+            active_input.clear_cursor()
+        except RuntimeError:
+            DigitInput._active_cursor_input = None
 
     def _handle_order_confirm(self, row: OrderRow) -> None:
         if self.draft and self.draft.read_only:
@@ -1318,10 +1315,21 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             self.status_label.setText("已取消删除股票")
             return
+        visible_codes_before_delete = [
+            card.stock.ts_code for card in self._visible_stock_cards_in_order()
+        ]
+        deleted_index = visible_codes_before_delete.index(stock.ts_code)
         self.draft, self._last_deleted_snapshot = self.service.delete_stock_with_snapshot(self.draft.manage_date, stock.ts_code)
         self.undo_delete_button.setEnabled(True)
         self.status_label.setText("股票已删除")
         self.set_draft(self.draft, preserve_stock_scroll_position=True)
+        remaining_cards = self._visible_stock_cards_in_order()
+        if remaining_cards:
+            selected_index = min(deleted_index, len(remaining_cards) - 1)
+            selected_card = remaining_cards[selected_index]
+            combo_index = self.stock_jump_combo.findData(selected_card.stock.ts_code, Qt.UserRole)
+            self.stock_jump_combo.setCurrentIndex(combo_index)
+            self._position_stock_card_at_viewport_top(selected_card)
 
     def _handle_add_order(self, stock, order_type: str) -> None:
         if self.draft and self.draft.read_only:
@@ -1330,14 +1338,29 @@ class MainWindow(QMainWindow):
         if not self.service or not self.draft:
             self.status_label.setText("订单服务未就绪")
             return
+        previous_order_ids = {
+            order.id
+            for current_stock in self.draft.stocks
+            for order in current_stock.orders
+            if order.id is not None
+        }
         self.draft = self.service.add_order(
             self.draft.manage_date,
             ts_code=stock.ts_code,
             stock_name=stock.stock_name,
             order_type=order_type,
         )
+        new_order_id = next(
+            (
+                order.id
+                for current_stock in self.draft.stocks
+                for order in current_stock.orders
+                if order.id is not None and order.id not in previous_order_ids
+            ),
+            None,
+        )
         self.status_label.setText("已新增订单，需确认")
-        self._refresh_after_single_stock_order_update(stock.ts_code)
+        self._refresh_after_single_stock_order_update(stock.ts_code, new_order_id=new_order_id)
 
     def _handle_add_stock(self) -> None:
         if self.draft and self.draft.read_only:

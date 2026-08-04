@@ -158,7 +158,38 @@ def test_order_changes_preserve_selected_stock_card_position(qtbot, sqlite_conn,
     assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
 
 
-def test_deleting_selected_stock_keeps_viewport_and_clears_stock_jump_selection(qtbot, sqlite_conn, tmp_path, monkeypatch):
+def test_adding_order_keeps_new_row_visible_and_focuses_price_input(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    service.drafts.add_order(draft.manage_date, "300251.SZ", "光线传媒", "sell_profit", Decimal("12.59"), 700)
+    service.drafts.add_order(draft.manage_date, "300251.SZ", "光线传媒", "sell_profit", Decimal("0"), 0)
+    draft = service.load_draft(draft.manage_date)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    window.resize(900, 460)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.stock_jump_combo.setCurrentIndex(2)
+    window.stock_jump_combo.activated.emit(2)
+    qtbot.wait(30)
+    card = window._stock_cards_by_code["300251.SZ"]
+    add_button = window.findChild(type(window.export_button), "add_order_sell_profit_300251.SZ")
+
+    qtbot.mouseClick(add_button, Qt.LeftButton)
+    qtbot.wait(30)
+
+    updated_card = window._stock_cards_by_code["300251.SZ"]
+    new_row = max(updated_card.order_rows, key=lambda row: row.order.id or 0)
+    assert new_row.order.order_type == "sell_profit"
+    assert new_row.height() >= new_row.sizeHint().height()
+    assert new_row.visibleRegion().boundingRect().height() == new_row.height()
+    assert new_row.price_input.mapTo(updated_card, new_row.price_input.rect().topLeft()).y() >= 0
+    assert new_row.price_input.mapTo(updated_card, new_row.price_input.rect().bottomRight()).y() <= updated_card.height()
+    assert new_row.price_input.hasFocus()
+    assert window.stock_content.minimumHeight() == 0
+
+
+def test_deleting_selected_stock_selects_adjacent_card_with_natural_viewport(qtbot, sqlite_conn, tmp_path, monkeypatch):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     window = MainWindow(draft, service)
     qtbot.addWidget(window)
@@ -178,13 +209,14 @@ def test_deleting_selected_stock_keeps_viewport_and_clears_stock_jump_selection(
     qtbot.mouseClick(selected_card.delete_stock_button, Qt.LeftButton)
     qtbot.wait(250)
 
-    assert window.stock_jump_combo.currentIndex() == -1
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
     assert [window.stock_jump_combo.itemData(index, Qt.UserRole) for index in range(window.stock_jump_combo.count())] == [
         "002153.SZ",
         "300162.SZ",
     ]
-    assert scroll_bar.value() == scroll_value_before
-    assert scroll_values == []
+    assert scroll_bar.value() <= scroll_bar.maximum()
+    assert scroll_bar.value() != scroll_value_before
+    assert scroll_values
 
     remaining_card = window._stock_cards_by_code["300162.SZ"]
     scroll_bar.setValue(remaining_card.y())

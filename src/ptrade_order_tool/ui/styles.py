@@ -327,13 +327,14 @@ QLabel#stock_metric_chip[tone="positive"] {
 }
 
 QWidget#stock_card_warning_box {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
+    background: #fefce8;
+    border: 1px solid #fde68a;
     border-radius: 6px;
 }
 
 QLabel#stock_card_warning {
-    color: #1d4ed8;
+    color: #854d0e;
+    font-size: 12px;
     font-weight: 700;
 }
 

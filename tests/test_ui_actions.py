@@ -409,10 +409,10 @@ def test_order_row_leading_bar_stays_neutral():
     assert 'QWidget#order_row[side="sell_loss"]' not in APP_STYLESHEET
 
 
-def test_stock_card_warning_uses_blue_colors():
-    assert 'QWidget#stock_card_warning_box {\n    background: #eff6ff;' in APP_STYLESHEET
-    assert 'border: 1px solid #bfdbfe;' in APP_STYLESHEET
-    assert 'QLabel#stock_card_warning {\n    color: #1d4ed8;' in APP_STYLESHEET
+def test_stock_card_warning_uses_distinct_yellow_colors():
+    assert 'QWidget#stock_card_warning_box {\n    background: #fefce8;' in APP_STYLESHEET
+    assert 'border: 1px solid #fde68a;' in APP_STYLESHEET
+    assert 'QLabel#stock_card_warning {\n    color: #854d0e;\n    font-size: 12px;' in APP_STYLESHEET
 
 
 def test_preferred_ui_font_family_prioritizes_cjk_friendly_fonts():

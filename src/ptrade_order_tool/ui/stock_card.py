@@ -216,11 +216,12 @@ class StockCard(QFrame):
             warning_box = QWidget(parent=self)
             warning_box.setObjectName("stock_card_warning_box")
             warning_layout = QVBoxLayout(warning_box)
-            warning_layout.setContentsMargins(8, 6, 8, 6)
+            warning_layout.setContentsMargins(8, 5, 8, 5)
             warning_layout.setSpacing(2)
             for text in warning_texts:
                 warning_label = QLabel(text, parent=warning_box)
                 warning_label.setObjectName("stock_card_warning")
+                warning_label.setWordWrap(True)
                 warning_layout.addWidget(warning_label)
             layout.addWidget(warning_box)
 

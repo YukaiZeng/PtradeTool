@@ -500,6 +500,23 @@ def test_stock_card_shows_holding_warnings_without_condition_orders(qtbot):
     assert "止损合计 0，不等于持仓 1,200" in warnings
 
 
+def test_stock_card_warning_labels_wrap_to_preserve_long_reminders(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=False,
+        orders=[OrderDraft("sell_profit", Decimal("10.00"), 500), OrderDraft("sell_loss", Decimal("11.00"), 500)],
+    )
+
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+
+    warning_labels = card.findChildren(QLabel, "stock_card_warning")
+
+    assert warning_labels
+    assert all(label.wordWrap() for label in warning_labels)
+
+
 def test_stock_card_daily_quote_zero_pct_uses_black_text_and_red_kline(qtbot):
     stock = StockDraft(ts_code="600000.SH", stock_name="浦发银行", is_holding=False, orders=[])
     quote = DailyQuote(

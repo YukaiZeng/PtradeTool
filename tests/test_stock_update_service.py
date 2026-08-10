@@ -98,6 +98,27 @@ def test_stock_update_worker_uses_default_timeout_for_full_stock_basic_response(
     assert created_timeouts == [30]
 
 
+def test_stock_update_worker_skips_trade_calendar_when_already_synced(monkeypatch):
+    queried = []
+
+    class FakeClient:
+        def __init__(self, _token, timeout=30):
+            pass
+
+        def query(self, api_name, **_kwargs):
+            queried.append(api_name)
+            if api_name == "stock_basic":
+                return []
+            raise AssertionError("trade_cal should not be queried")
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.TushareProClient", FakeClient)
+    worker = StockUpdateWorker("token", "20260609", "20260101", "20271231", fetch_calendar=False)
+
+    worker.run()
+
+    assert queried == ["stock_basic"]
+
+
 def test_stock_update_result_uses_worker_date_for_persistence():
     captured = []
 

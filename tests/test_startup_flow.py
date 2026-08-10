@@ -495,3 +495,33 @@ def test_maintain_trade_calendar_starts_from_earliest_ptrade_json(sqlite_conn, t
     assert captured["start_date"] == "20260111"
     assert captured["end_date"] >= "20260610"
     assert service.list_manage_dates(today="20260610", now=datetime(2026, 6, 10, 17, 31)) == ["20260610", "20260225", "20260224"]
+
+
+def test_maintain_trade_calendar_queries_tushare_once_per_day(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    (tmp_path / ".env").write_text("TUSHARE_TOKEN=abc\n", encoding="utf-8")
+    calendar = TradeCalendar(sqlite_conn)
+    calls = []
+
+    class FakePro:
+        def query(self, api_name, **kwargs):
+            calls.append((api_name, kwargs))
+            return []
+
+    service = AppService(sqlite_conn, AppConfig(), FakeStockMatcher(), calendar)
+
+    assert service.maintain_trade_calendar(
+        today="20260610",
+        executable_dir=tmp_path,
+        user_data_dir=tmp_path / "user",
+        pro_client=FakePro(),
+    ) == 0
+    assert service.maintain_trade_calendar(
+        today="20260610",
+        executable_dir=tmp_path,
+        user_data_dir=tmp_path / "user",
+        pro_client=FakePro(),
+    ) == 0
+
+    assert len(calls) == 1
+    assert calendar.has_sync_for("20260610") is True

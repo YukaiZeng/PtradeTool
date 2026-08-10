@@ -152,6 +152,17 @@ QPushButton#locate_unconfirmed_button:enabled:hover {
     border-color: #fb923c;
 }
 
+QPushButton#locate_unconfirmed_button[tone="blocker"]:enabled {
+    background: #fff1f2;
+    border-color: #fda4af;
+    color: #c1121f;
+}
+
+QPushButton#locate_unconfirmed_button[tone="blocker"]:enabled:hover {
+    background: #ffe4e6;
+    border-color: #fb7185;
+}
+
 QPushButton#open_export_dir_button {
     color: #334155;
 }

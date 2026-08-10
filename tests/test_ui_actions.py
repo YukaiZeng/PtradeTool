@@ -949,6 +949,60 @@ def test_check_export_button_reports_pending_and_blockers(qtbot, sqlite_conn, tm
     assert window.export_button.isEnabled() is False
 
 
+def test_close_price_blocker_updates_export_check_and_locate_controls(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.40"), 100)
+    service.update_and_confirm_order(order_id, price=Decimal("11.40"), shares=100, order_type="buy_limit")
+    service.cache_daily_quote_rows(
+        draft.manage_date,
+        [{
+            "ts_code": "002153.SZ",
+            "trade_date": draft.manage_date,
+            "open": "11.00",
+            "high": "11.00",
+            "low": "11.00",
+            "close": "11.00",
+            "pre_close": "11.00",
+            "change": "0",
+            "pct_chg": "0",
+            "vol": "0",
+            "amount": "0",
+        }],
+    )
+    window = MainWindow(service.load_draft(draft.manage_date), service)
+    qtbot.addWidget(window)
+    qtbot.waitUntil(lambda: window.check_export_button.property("tone") == "blocker")
+
+    assert window.export_button.isEnabled() is False
+    assert window.check_export_button.toolTip() == "1 个阻断项"
+    assert window.check_export_button.property("tone") == "blocker"
+    assert window.locate_unconfirmed_button.isEnabled() is True
+    assert window.locate_unconfirmed_button.property("tone") == "blocker"
+
+
+def test_tab_switch_selects_first_stock_in_current_page(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+
+    window.stock_jump_combo.setCurrentIndex(window.stock_jump_combo.findData("300251.SZ", Qt.UserRole))
+    qtbot.mouseClick(window.tabs._buttons[0], Qt.LeftButton)
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "002153.SZ"
+
+    window.stock_jump_combo.setCurrentIndex(window.stock_jump_combo.findData("300251.SZ", Qt.UserRole))
+    qtbot.mouseClick(window.tabs._buttons[2], Qt.LeftButton)
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "002153.SZ"
+
+    qtbot.mouseClick(window.tabs._buttons[1], Qt.LeftButton)
+    assert window.stock_jump_combo.count() == 0
+    assert window.stock_jump_combo.currentIndex() == -1
+
+    qtbot.mouseClick(window.tabs._buttons[0], Qt.LeftButton)
+    window.stock_jump_combo.setCurrentIndex(window.stock_jump_combo.findData("300251.SZ", Qt.UserRole))
+    qtbot.mouseClick(window.tabs._buttons[0], Qt.LeftButton)
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "002153.SZ"
+
+
 def test_check_export_button_uses_pending_tone_when_only_pending_blocks_export(qtbot, sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)

@@ -232,6 +232,8 @@ class AppService:
         user_data_dir: Path,
         pro_client=None,
     ) -> int:
+        if self.calendar.has_sync_for(today):
+            return 0
         token = load_tushare_token(executable_dir, user_data_dir)
         start_date = self._calendar_sync_start_date(today)
         end_date = f"{int(today[:4]) + 1}1231"
@@ -240,6 +242,7 @@ class AppService:
             start_date=start_date,
             end_date=end_date,
             pro_client=pro_client,
+            synced_on=today,
         )
 
     def update_stock_basic(
@@ -285,7 +288,7 @@ class AppService:
         calendar_rows: list[dict[str, object]],
         stock_rows: list[dict[str, object] | tuple[str, str, str, str, str, str, str]],
     ) -> int:
-        self.calendar.upsert_trade_calendar(calendar_rows, updated_on=today)
+        self.calendar.record_sync_result(calendar_rows, synced_on=today)
         if not self.calendar.is_trade_day(today) and getattr(self.stock_matcher, "has_any_stock_data", lambda: False)():
             return 0
         if not hasattr(self.stock_matcher, "upsert_stock_basic"):

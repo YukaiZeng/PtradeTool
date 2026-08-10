@@ -7,6 +7,9 @@ from typing import Any, Iterable
 from ptrade_order_tool.data.tushare_client import TushareProClient
 
 
+TRADE_CALENDAR_SYNC_META_KEY = "trade_calendar.last_sync_on"
+
+
 class TradeCalendar:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -93,6 +96,32 @@ class TradeCalendar:
         ).fetchone()
         return row is not None
 
+    def has_sync_for(self, sync_date: str) -> bool:
+        row = self.conn.execute(
+            "select value from app_meta where key = ?",
+            (TRADE_CALENDAR_SYNC_META_KEY,),
+        ).fetchone()
+        return bool(row and str(row["value"]) == sync_date)
+
+    def record_sync_result(
+        self,
+        rows: Iterable[dict[str, str | int]],
+        *,
+        synced_on: str,
+    ) -> int:
+        rows = list(rows)
+        if rows:
+            self.upsert_trade_calendar(rows, updated_on=synced_on)
+        self.conn.execute(
+            """
+            insert into app_meta (key, value) values (?, ?)
+            on conflict(key) do update set value = excluded.value
+            """,
+            (TRADE_CALENDAR_SYNC_META_KEY, synced_on),
+        )
+        self.conn.commit()
+        return len(rows)
+
     def sync_from_tushare(self, token: str, today: str, pro_client: Any | None = None) -> int:
         year = int(today[:4])
         return self.sync_range_from_tushare(
@@ -100,6 +129,7 @@ class TradeCalendar:
             start_date=f"{year}0101",
             end_date=f"{year + 1}1231",
             pro_client=pro_client,
+            synced_on=today,
         )
 
     def sync_range_from_tushare(
@@ -109,6 +139,7 @@ class TradeCalendar:
         start_date: str,
         end_date: str,
         pro_client: Any | None = None,
+        synced_on: str | None = None,
     ) -> int:
         if pro_client is None:
             pro_client = TushareProClient(token)
@@ -122,5 +153,7 @@ class TradeCalendar:
             rows = result.to_dict("records")
         else:
             rows = list(result)
-        self.upsert_trade_calendar(rows, updated_on=datetime.now().strftime("%Y%m%d"))
-        return len(rows)
+        return self.record_sync_result(
+            rows,
+            synced_on=synced_on or datetime.now().strftime("%Y%m%d"),
+        )

@@ -166,3 +166,14 @@ def test_main_injects_service_into_main_window(monkeypatch):
     assert worker.deleted is True
     assert FakeWindow.instance._startup_trade_calendar_worker is None
     assert worker not in FakeWindow.instance._background_workers
+
+
+def test_start_trade_calendar_maintenance_skips_synced_day(monkeypatch):
+    service = FakeService()
+    service.calendar.has_sync_for = lambda _date: True
+    monkeypatch.setattr(main_module, "datetime", FakeDateTime)
+
+    worker = main_module.start_trade_calendar_maintenance(service)
+
+    assert worker is None
+    assert service.calls == []

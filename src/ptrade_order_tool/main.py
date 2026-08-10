@@ -53,6 +53,8 @@ def start_trade_calendar_maintenance(service, owner=None) -> TradeCalendarMainte
     if not hasattr(service, "stock_update_fetch_plan") or not hasattr(service, "calendar"):
         return None
     today = datetime.now().strftime("%Y%m%d")
+    if getattr(service.calendar, "has_sync_for", lambda _date: False)(today):
+        return None
     try:
         plan = service.stock_update_fetch_plan(
             today=today,
@@ -74,7 +76,10 @@ def start_trade_calendar_maintenance(service, owner=None) -> TradeCalendarMainte
         if worker.isInterruptionRequested():
             return
         try:
-            service.calendar.upsert_trade_calendar(rows, updated_on=today)
+            if hasattr(service.calendar, "record_sync_result"):
+                service.calendar.record_sync_result(rows, synced_on=today)
+            else:
+                service.calendar.upsert_trade_calendar(rows, updated_on=today)
         except Exception:
             return
 

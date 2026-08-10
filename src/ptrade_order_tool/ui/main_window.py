@@ -37,7 +37,7 @@ from ptrade_order_tool.data.daily_quote_store import DAILY_FIELDS
 from ptrade_order_tool.data.order_exporter import validate_export
 from ptrade_order_tool.data.stock_master import MissingTushareToken, load_tushare_token, prepare_stock_basic_rows, save_tushare_token
 from ptrade_order_tool.data.tushare_client import TushareProClient
-from ptrade_order_tool.models import DailyQuote, SessionDraft
+from ptrade_order_tool.models import DailyQuote, ExportValidation, SessionDraft
 from ptrade_order_tool.ui.digit_input import DigitInput
 from ptrade_order_tool.ui.order_row import OrderRow
 from ptrade_order_tool.ui.popup_positioning import popup_vertical_position
@@ -154,12 +154,14 @@ class StatusLabel(QLabel):
 
 class StockFilterTabs(QWidget):
     currentChanged = Signal(int)
+    tabClicked = Signal(int)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("stock_filter_tabs")
         self._buttons: list[QPushButton] = []
         self._current_index = 0
+        self._handling_tab_click = False
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         layout = QHBoxLayout(self)
@@ -174,7 +176,7 @@ class StockFilterTabs(QWidget):
             self._group.addButton(button, index)
             layout.addWidget(button)
         self._buttons[0].setChecked(True)
-        self._group.idClicked.connect(self.setCurrentIndex)
+        self._group.idClicked.connect(self._handle_tab_clicked)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 
     def addTab(self, _widget: QWidget, text: str) -> None:  # noqa: N802
@@ -200,6 +202,14 @@ class StockFilterTabs(QWidget):
         if changed:
             self.currentChanged.emit(index)
 
+    def _handle_tab_clicked(self, index: int) -> None:
+        self._handling_tab_click = True
+        try:
+            self.setCurrentIndex(index)
+        finally:
+            self._handling_tab_click = False
+        self.tabClicked.emit(index)
+
     def _refresh_button_widths(self) -> None:
         if not self._buttons:
             return
@@ -213,22 +223,34 @@ class StockUpdateWorker(QThread):
     finishedWithRows = Signal(str, list, list)
     failedWithMessage = Signal(str)
 
-    def __init__(self, token: str, today: str, calendar_start_date: str, calendar_end_date: str) -> None:
+    def __init__(
+        self,
+        token: str,
+        today: str,
+        calendar_start_date: str,
+        calendar_end_date: str,
+        *,
+        fetch_calendar: bool = True,
+    ) -> None:
         super().__init__()
         self.token = token
         self.today = today
         self.calendar_start_date = calendar_start_date
         self.calendar_end_date = calendar_end_date
+        self.fetch_calendar = fetch_calendar
 
     def run(self) -> None:
         try:
             client = TushareProClient(self.token)
-            calendar_rows = client.query(
-                "trade_cal",
-                start_date=self.calendar_start_date,
-                end_date=self.calendar_end_date,
-                fields="cal_date,is_open",
-            )
+            if self.fetch_calendar:
+                calendar_rows = client.query(
+                    "trade_cal",
+                    start_date=self.calendar_start_date,
+                    end_date=self.calendar_end_date,
+                    fields="cal_date,is_open",
+                )
+            else:
+                calendar_rows = []
             if self.isInterruptionRequested():
                 return
             stock_rows = client.query("stock_basic", fields="ts_code,symbol,name,list_status")
@@ -443,7 +465,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(QWidget(), "全部")
         self.tabs.addTab(QWidget(), "开仓")
         self.tabs.addTab(QWidget(), "持仓")
-        self.tabs.currentChanged.connect(lambda index: self._apply_stock_filter())
+        self.tabs.currentChanged.connect(self._handle_stock_filter_tab_changed)
+        self.tabs.tabClicked.connect(
+            lambda index: self._apply_stock_filter(select_first_when_selection_is_absent=True, force_first=True)
+        )
         self.stock_jump_combo = AutoWidthComboBox()
         self.stock_jump_combo.setObjectName("stock_jump_combo")
         self.stock_jump_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
@@ -596,6 +621,12 @@ class MainWindow(QMainWindow):
         if not self.service or not hasattr(self.service, "maintain_trade_calendar"):
             return
         today = datetime.now().strftime("%Y%m%d")
+        startup_worker = getattr(self, "_startup_trade_calendar_worker", None)
+        if startup_worker is not None and startup_worker.isRunning():
+            return
+        calendar = getattr(self.service, "calendar", None)
+        if calendar is not None and getattr(calendar, "has_sync_for", lambda _date: False)(today):
+            return
         try:
             count = self.service.maintain_trade_calendar(
                 today=today,
@@ -626,6 +657,10 @@ class MainWindow(QMainWindow):
         if self._stock_update_worker and self._stock_update_worker.isRunning():
             self.status_label.setText("股票基础数据正在更新...")
             return
+        startup_worker = getattr(self, "_startup_trade_calendar_worker", None)
+        if startup_worker is not None and startup_worker.isRunning():
+            self.status_label.setText("交易日历正在更新...")
+            return
         self.set_stock_update_state("updating")
         self.status_label.setText("正在更新股票基础数据...")
         try:
@@ -647,6 +682,11 @@ class MainWindow(QMainWindow):
             plan["today"],
             plan["calendar_start_date"],
             plan["calendar_end_date"],
+            fetch_calendar=not getattr(
+                getattr(self.service, "calendar", None),
+                "has_sync_for",
+                lambda _date: False,
+            )(today),
         )
         self._track_background_worker(self._stock_update_worker)
         self._stock_update_worker.finishedWithRows.connect(self._handle_stock_update_rows_loaded)
@@ -766,7 +806,27 @@ class MainWindow(QMainWindow):
     def _refresh_locate_unconfirmed_button(self) -> None:
         if not hasattr(self, "locate_unconfirmed_button"):
             return
-        self.locate_unconfirmed_button.setEnabled(self._first_attention_stock() is not None)
+        tone = "clean"
+        enabled = False
+        if self.draft:
+            validation = self._validate_draft_for_export()
+            pending = self._pending_order_lines(self.draft)
+            blockers = self._non_pending_blockers(self.draft, validation.blockers)
+            enabled = bool(pending or blockers)
+            tone = "blocker" if blockers else "pending"
+        self.locate_unconfirmed_button.setEnabled(enabled)
+        self.locate_unconfirmed_button.setProperty("tone", tone)
+        self._refresh_dynamic_style(self.locate_unconfirmed_button)
+
+    def _validate_draft_for_export(self):
+        if not self.draft:
+            return ExportValidation()
+        if self.service and hasattr(self.service, "validate_draft_for_export"):
+            try:
+                return self.service.validate_draft_for_export(self.draft.manage_date)
+            except Exception:
+                pass
+        return validate_export(self.draft, daily_quotes=self._daily_quotes)
 
     def _refresh_check_export_button(self) -> None:
         if not hasattr(self, "check_export_button"):
@@ -775,7 +835,7 @@ class MainWindow(QMainWindow):
         tooltip = "检查未确认订单和阻断项"
         can_export = False
         if self.draft:
-            validation = validate_export(self.draft)
+            validation = self._validate_draft_for_export()
             pending = self._pending_order_lines(self.draft)
             blockers = self._non_pending_blockers(self.draft, validation.blockers)
             status_parts = self._check_status_parts(pending, blockers)
@@ -855,10 +915,15 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, f"开仓 {opening}")
         self.tabs.setTabText(2, f"持仓 {holding}")
 
+    def _handle_stock_filter_tab_changed(self, _index: int) -> None:
+        if not self.tabs._handling_tab_click:
+            self._apply_stock_filter()
+
     def _apply_stock_filter(
         self,
         *,
         select_first_when_selection_is_absent: bool = False,
+        force_first: bool = False,
     ) -> None:
         if not hasattr(self, "stock_content"):
             return
@@ -873,9 +938,15 @@ class MainWindow(QMainWindow):
                 card.setVisible(True)
         self._refresh_stock_jump_combo(
             select_first_when_selection_is_absent=select_first_when_selection_is_absent,
+            force_first=force_first,
         )
 
-    def _refresh_stock_jump_combo(self, *, select_first_when_selection_is_absent: bool = False) -> None:
+    def _refresh_stock_jump_combo(
+        self,
+        *,
+        select_first_when_selection_is_absent: bool = False,
+        force_first: bool = False,
+    ) -> None:
         if not hasattr(self, "stock_jump_combo"):
             return
         selected_ts_code = self.stock_jump_combo.currentData(Qt.UserRole)
@@ -885,8 +956,9 @@ class MainWindow(QMainWindow):
         for card in self._visible_stock_cards_in_order():
             self.stock_jump_combo.addItem(f"{card.stock.ts_code} {card.stock.stock_name}", card.stock.ts_code)
         selected_index = self.stock_jump_combo.findData(selected_ts_code, Qt.UserRole)
-        if selected_index < 0 and self.stock_jump_combo.count() and (
-            not had_items or select_first_when_selection_is_absent
+        if self.stock_jump_combo.count() and (
+            force_first
+            or (selected_index < 0 and (not had_items or select_first_when_selection_is_absent))
         ):
             selected_index = 0
         self.stock_jump_combo.setCurrentIndex(selected_index)
@@ -1174,6 +1246,8 @@ class MainWindow(QMainWindow):
             card = self._stock_cards_by_code.get(ts_code)
             if card:
                 card.set_daily_quote(quote)
+        self._refresh_locate_unconfirmed_button()
+        self._refresh_check_export_button()
 
     def _handle_daily_quotes_worker_finished(self) -> None:
         worker = self.sender()
@@ -1723,7 +1797,7 @@ class MainWindow(QMainWindow):
     def _first_attention_stock(self):
         if not self.draft:
             return None
-        validation = validate_export(self.draft)
+        validation = self._validate_draft_for_export()
         for stock in self.draft.stocks:
             if any(not order.confirmed for order in stock.orders):
                 return stock

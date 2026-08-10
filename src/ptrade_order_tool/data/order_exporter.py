@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
 
-from ptrade_order_tool.models import ExportValidation, OrderDraft, SessionDraft, StockDraft
+from ptrade_order_tool.models import DailyQuote, ExportValidation, OrderDraft, SessionDraft, StockDraft
+from ptrade_order_tool.order_validation import buy_price_violations
 
 
 ORDER_TYPES = ("buy_stop", "buy_limit", "sell_profit", "sell_loss")
 
 
-def validate_export(draft: SessionDraft) -> ExportValidation:
+def validate_export(
+    draft: SessionDraft,
+    *,
+    daily_quotes: Mapping[str, DailyQuote] | None = None,
+) -> ExportValidation:
     validation = ExportValidation()
 
     for stock in draft.stocks:
@@ -22,6 +28,9 @@ def validate_export(draft: SessionDraft) -> ExportValidation:
                 _validate_order(stock, order, validation)
 
         confirmed = [order for order in stock.orders if order.confirmed]
+        quote = daily_quotes.get(stock.ts_code) if daily_quotes else None
+        for violation in buy_price_violations(confirmed, quote.close if quote else None):
+            validation.blockers.append(f"{stock.ts_code} {stock.stock_name} {violation}")
         if not confirmed:
             continue
 
@@ -53,8 +62,14 @@ def build_order_json(draft: SessionDraft) -> dict[str, dict]:
     return result
 
 
-def export_order_json(draft: SessionDraft, output_path: Path, *, allow_overwrite: bool = False) -> None:
-    validation = validate_export(draft)
+def export_order_json(
+    draft: SessionDraft,
+    output_path: Path,
+    *,
+    allow_overwrite: bool = False,
+    daily_quotes: Mapping[str, DailyQuote] | None = None,
+) -> None:
+    validation = validate_export(draft, daily_quotes=daily_quotes)
     if not validation.can_export:
         raise ValueError("; ".join(validation.blockers))
     if output_path.exists() and not allow_overwrite:

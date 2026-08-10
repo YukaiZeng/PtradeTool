@@ -7,6 +7,7 @@ import pytest
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.draft_store import DraftStore
 from ptrade_order_tool.data.order_exporter import build_order_json, export_order_json, validate_export
+from ptrade_order_tool.models import DailyQuote
 from ptrade_order_tool.data.ptrade_importer import parse_ptrade_json
 from tests.test_ptrade_importer import FakeStockMatcher
 
@@ -25,6 +26,22 @@ def make_store_with_draft(sqlite_conn):
         export_json_path="/tmp/order_data/20260225.json",
     )
     return store, draft
+
+
+def make_daily_quote(ts_code: str, close: str) -> DailyQuote:
+    return DailyQuote(
+        ts_code=ts_code,
+        trade_date="20260225",
+        open=Decimal(close),
+        high=Decimal(close),
+        low=Decimal(close),
+        close=Decimal(close),
+        pre_close=Decimal(close),
+        change=Decimal("0"),
+        pct_chg=Decimal("0"),
+        vol=Decimal("0"),
+        amount=Decimal("0"),
+    )
 
 
 def test_export_json_contains_only_clean_order_fields(sqlite_conn):
@@ -87,6 +104,48 @@ def test_invalid_price_and_shares_block_export(sqlite_conn):
     assert validation.can_export is False
     assert any("价格最多2位小数" in item for item in validation.blockers)
     assert any("100股整数倍" in item for item in validation.blockers)
+
+
+def test_buy_prices_conflicting_with_close_block_export(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    stop_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_stop", Decimal("9.99"), 100)
+    limit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("10.00"), 100)
+    store.confirm_order(stop_id)
+    store.confirm_order(limit_id)
+
+    validation = validate_export(
+        store.load_draft("20260225"),
+        daily_quotes={"002153.SZ": make_daily_quote("002153.SZ", "10.00")},
+    )
+
+    assert validation.can_export is False
+    assert "002153.SZ 石基信息 突破买价格 9.99 低于收盘价 10.00（阻断）" in validation.blockers
+    assert "002153.SZ 石基信息 回调买价格 10.00 不小于收盘价 10.00（阻断）" in validation.blockers
+
+
+def test_buy_price_checks_allow_boundary_and_skip_missing_quote(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    stop_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_stop", Decimal("10.00"), 100)
+    limit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("9.99"), 100)
+    store.confirm_order(stop_id)
+    store.confirm_order(limit_id)
+    reloaded = store.load_draft("20260225")
+
+    assert validate_export(reloaded, daily_quotes={"002153.SZ": make_daily_quote("002153.SZ", "10.00")}).can_export is True
+    assert validate_export(reloaded).can_export is True
+
+
+def test_export_order_json_rechecks_buy_prices_against_close(sqlite_conn, tmp_path):
+    store, draft = make_store_with_draft(sqlite_conn)
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("10.00"), 100)
+    store.confirm_order(order_id)
+
+    with pytest.raises(ValueError, match="回调买价格"):
+        export_order_json(
+            store.load_draft("20260225"),
+            tmp_path / "20260225.json",
+            daily_quotes={"002153.SZ": make_daily_quote("002153.SZ", "10.00")},
+        )
 
 
 def test_holding_sell_total_mismatch_warns_not_blocks(sqlite_conn):

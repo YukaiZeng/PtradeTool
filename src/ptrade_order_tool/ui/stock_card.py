@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptrade_order_tool.models import DailyQuote, OrderDraft, StockDraft
+from ptrade_order_tool.order_validation import buy_price_violations
 from ptrade_order_tool.ui.order_row import ORDER_LABELS, OrderRow
 
 
@@ -147,6 +148,7 @@ class StockCard(QFrame):
         super().__init__(parent)
         self.stock = stock
         self.read_only = read_only
+        self.daily_quote = daily_quote
         self.order_rows: list[OrderRow] = []
         self.setObjectName(f"stock_card_{stock.ts_code}")
         self.setFrameShape(QFrame.StyledPanel)
@@ -211,25 +213,19 @@ class StockCard(QFrame):
         self.delete_stock_button.clicked.connect(lambda: self.deleteStockRequested.emit(self.stock))
         header_layout.addWidget(self.delete_stock_button)
 
-        warning_texts = self._warning_texts(grouped)
-        if warning_texts:
-            warning_box = QWidget(parent=self)
-            warning_box.setObjectName("stock_card_warning_box")
-            warning_layout = QVBoxLayout(warning_box)
-            warning_layout.setContentsMargins(8, 5, 8, 5)
-            warning_layout.setSpacing(2)
-            for text in warning_texts:
-                warning_label = QLabel(text, parent=warning_box)
-                warning_label.setObjectName("stock_card_warning")
-                warning_label.setWordWrap(True)
-                warning_layout.addWidget(warning_label)
-            layout.addWidget(warning_box)
+        self.warning_box = QWidget(parent=self)
+        self.warning_box.setObjectName("stock_card_warning_box")
+        self.warning_layout = QVBoxLayout(self.warning_box)
+        self.warning_layout.setContentsMargins(8, 5, 8, 5)
+        self.warning_layout.setSpacing(2)
+        layout.addWidget(self.warning_box)
 
         self.orders_grid = QGridLayout()
         self.orders_grid.setContentsMargins(0, 0, 0, 0)
         self.orders_grid.setHorizontalSpacing(6)
         self.orders_grid.setVerticalSpacing(4)
         layout.addLayout(self.orders_grid)
+        self._refresh_warning_box(grouped)
 
         order_positions = {
             "buy_stop": (0, 0),
@@ -296,7 +292,9 @@ class StockCard(QFrame):
         self.align_order_input_digits()
 
     def set_daily_quote(self, quote: DailyQuote | None) -> None:
+        self.daily_quote = quote
         self._set_daily_quote(quote)
+        self._refresh_warning_box()
 
     def align_order_input_digits(self) -> None:
         if not self.order_rows:
@@ -371,7 +369,31 @@ class StockCard(QFrame):
             for loss_order in grouped.get("sell_loss", []):
                 if profit_order.price < loss_order.price:
                     warnings.append(f"止盈价格 {profit_order.price:.2f} 小于止损价格 {loss_order.price:.2f}")
+        warnings.extend(
+            buy_price_violations(
+                self.stock.orders,
+                self.daily_quote.close if self.daily_quote else None,
+            )
+        )
         return warnings
+
+    def _refresh_warning_box(self, grouped: dict[str, list[OrderDraft]] | None = None) -> None:
+        if grouped is None:
+            grouped = defaultdict(list)
+            for order in self.stock.orders:
+                grouped[order.order_type].append(order)
+        while self.warning_layout.count():
+            item = self.warning_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        warning_texts = self._warning_texts(grouped)
+        for text in warning_texts:
+            warning_label = QLabel(text, parent=self.warning_box)
+            warning_label.setObjectName("stock_card_warning")
+            warning_label.setWordWrap(True)
+            self.warning_layout.addWidget(warning_label)
+        self.warning_box.setVisible(bool(warning_texts))
 
     def _refresh_dynamic_style(self, widget: QWidget) -> None:
         widget.style().unpolish(widget)

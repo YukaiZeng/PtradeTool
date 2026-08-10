@@ -427,6 +427,35 @@ def test_stock_card_shows_daily_quote_after_type_badge_without_growing_header(qt
     assert quote_widget.height() <= card.type_badge.height() + 4
 
 
+def test_stock_card_adds_buy_price_blocker_reminder_when_quote_arrives(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=False,
+        orders=[OrderDraft("buy_limit", Decimal("10.00"), 100)],
+    )
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+    quote = DailyQuote(
+        ts_code="600000.SH",
+        trade_date="20260225",
+        open=Decimal("10.00"),
+        high=Decimal("10.00"),
+        low=Decimal("10.00"),
+        close=Decimal("10.00"),
+        pre_close=Decimal("10.00"),
+        change=Decimal("0"),
+        pct_chg=Decimal("0"),
+        vol=Decimal("0"),
+        amount=Decimal("0"),
+    )
+
+    card.set_daily_quote(quote)
+
+    warnings = [label.text() for label in card.findChildren(QLabel, "stock_card_warning")]
+    assert "回调买价格 10.00 不小于收盘价 10.00（阻断）" in warnings
+
+
 def test_stock_card_formats_holding_value_profit_and_daily_amount(qtbot):
     stock = StockDraft(
         ts_code="600000.SH",

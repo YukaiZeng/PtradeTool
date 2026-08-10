@@ -56,6 +56,33 @@ def test_update_and_confirm_order(sqlite_conn, tmp_path):
     assert order.shares == 1500
 
 
+def test_export_validation_blocks_buy_price_conflicting_with_cached_close(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.40"), 100)
+    service.update_and_confirm_order(order_id, price=Decimal("11.40"), shares=100, order_type="buy_limit")
+    service.cache_daily_quote_rows(
+        draft.manage_date,
+        [{
+            "ts_code": "002153.SZ",
+            "trade_date": draft.manage_date,
+            "open": "11.00",
+            "high": "11.00",
+            "low": "11.00",
+            "close": "11.00",
+            "pre_close": "11.00",
+            "change": "0",
+            "pct_chg": "0",
+            "vol": "0",
+            "amount": "0",
+        }],
+    )
+
+    validation = service.validate_draft_for_export(draft.manage_date)
+
+    assert validation.can_export is False
+    assert "002153.SZ 石基信息 回调买价格 11.40 不小于收盘价 11.00（阻断）" in validation.blockers
+
+
 def test_delete_order(sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)

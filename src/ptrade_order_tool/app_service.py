@@ -328,19 +328,27 @@ class AppService:
 
     def export_draft(self, manage_date: str, *, allow_overwrite: bool = False) -> ExportValidation:
         draft = self.load_draft(manage_date)
-        validation = validate_export(draft)
+        daily_quotes = self.cached_daily_quotes(manage_date, ts_codes=[stock.ts_code for stock in draft.stocks])
+        validation = validate_export(draft, daily_quotes=daily_quotes)
         if not validation.can_export:
             return validation
         if not draft.export_json_path:
             validation.blockers.append("导出路径未配置")
             return validation
-        export_order_json(draft, Path(draft.export_json_path), allow_overwrite=allow_overwrite)
+        export_order_json(
+            draft,
+            Path(draft.export_json_path),
+            allow_overwrite=allow_overwrite,
+            daily_quotes=daily_quotes,
+        )
         self.drafts.mark_exported(manage_date)
         self.logger.info("draft_exported manage_date=%s path=%s overwrite=%s", manage_date, draft.export_json_path, allow_overwrite)
         return validation
 
     def validate_draft_for_export(self, manage_date: str) -> ExportValidation:
-        return validate_export(self.load_draft(manage_date))
+        draft = self.load_draft(manage_date)
+        daily_quotes = self.cached_daily_quotes(manage_date, ts_codes=[stock.ts_code for stock in draft.stocks])
+        return validate_export(draft, daily_quotes=daily_quotes)
 
     def json_sync_plan(self, manage_date: str) -> JsonSyncPlan:
         plan = JsonSyncPlan(

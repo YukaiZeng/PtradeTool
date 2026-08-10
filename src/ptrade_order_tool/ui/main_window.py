@@ -1937,4 +1937,4 @@ class MainWindow(QMainWindow):
             return
         self.draft = self.service.load_draft(self.draft.manage_date)
         self.status_label.setText(f"导出完成: {self.draft.export_json_path}")
-        self.set_draft(self.draft)
+        self.set_draft(self.draft, preserve_stock_scroll_position=True)

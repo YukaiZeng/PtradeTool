@@ -845,6 +845,35 @@ def test_export_button_writes_order_json(qtbot, sqlite_conn, tmp_path, monkeypat
     assert window.status_label.toolTip() == f"导出完成: {order_dir / '20260225.json'}"
 
 
+def test_export_keeps_empty_stock_jump_selection(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    service.update_and_confirm_order(order_id, price=Decimal("11.4"), shares=1400, order_type="buy_limit")
+    window = MainWindow(service.load_draft(draft.manage_date), service)
+    qtbot.addWidget(window)
+    window.stock_jump_combo.setCurrentIndex(-1)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+
+    qtbot.mouseClick(window.export_button, Qt.LeftButton)
+
+    assert window.stock_jump_combo.currentIndex() == -1
+
+
+def test_export_keeps_selected_stock_jump_item(qtbot, sqlite_conn, tmp_path, monkeypatch):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
+    service.update_and_confirm_order(order_id, price=Decimal("11.4"), shares=1400, order_type="buy_limit")
+    window = MainWindow(service.load_draft(draft.manage_date), service)
+    qtbot.addWidget(window)
+    selected_index = window.stock_jump_combo.findData("300162.SZ", Qt.UserRole)
+    window.stock_jump_combo.setCurrentIndex(selected_index)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+
+    qtbot.mouseClick(window.export_button, Qt.LeftButton)
+
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == "300162.SZ"
+
+
 def test_open_export_dir_button_opens_configured_directory(qtbot, sqlite_conn, tmp_path, monkeypatch):
     service, draft, order_dir = make_service(sqlite_conn, tmp_path)
     window = MainWindow(draft, service)

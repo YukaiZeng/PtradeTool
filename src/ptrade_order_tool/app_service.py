@@ -288,7 +288,7 @@ class AppService:
         calendar_rows: list[dict[str, object]],
         stock_rows: list[dict[str, object] | tuple[str, str, str, str, str, str, str]],
     ) -> int:
-        if calendar_rows and not self.calendar.has_sync_for(today):
+        if not self.calendar.has_sync_for(today):
             self.calendar.record_sync_result(calendar_rows, synced_on=today)
         if not self.calendar.is_trade_day(today) and getattr(self.stock_matcher, "has_any_stock_data", lambda: False)():
             return 0

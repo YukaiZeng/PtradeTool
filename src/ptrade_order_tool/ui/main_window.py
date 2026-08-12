@@ -254,7 +254,7 @@ class StockUpdateWorker(QThread):
                 calendar_rows = []
             if self.isInterruptionRequested():
                 return
-            if calendar_rows:
+            if self.fetch_calendar:
                 self.calendarRowsLoaded.emit(self.today, calendar_rows)
             stock_rows = client.query("stock_basic", fields="ts_code,symbol,name,list_status")
             stock_rows = prepare_stock_basic_rows(stock_rows, self.today)
@@ -1807,7 +1807,7 @@ class MainWindow(QMainWindow):
         self._handle_stock_update_finished(count)
 
     def _handle_trade_calendar_rows_loaded(self, today: str, calendar_rows: list[dict[str, object]]) -> None:
-        if self.service and calendar_rows:
+        if self.service:
             self.service.calendar.record_sync_result(calendar_rows, synced_on=today)
 
     def _handle_stock_update_worker_finished(self) -> None:

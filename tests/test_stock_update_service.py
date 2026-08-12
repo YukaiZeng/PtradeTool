@@ -139,6 +139,26 @@ def test_stock_update_worker_emits_calendar_rows_even_when_stock_basic_fails(mon
     assert calendars == [("20260609", [{"cal_date": "20260609", "is_open": 1}])]
 
 
+def test_stock_update_worker_reports_successful_empty_calendar_result(monkeypatch):
+    class FakeClient:
+        def __init__(self, _token, timeout=30):
+            pass
+
+        def query(self, api_name, **_kwargs):
+            if api_name == "trade_cal":
+                return []
+            raise RuntimeError("stock_basic unavailable")
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.TushareProClient", FakeClient)
+    worker = StockUpdateWorker("token", "20260609", "20260101", "20271231")
+    calendars = []
+    worker.calendarRowsLoaded.connect(lambda today, rows: calendars.append((today, rows)))
+
+    worker.run()
+
+    assert calendars == [("20260609", [])]
+
+
 def test_stock_update_result_uses_worker_date_for_persistence():
     captured = []
 

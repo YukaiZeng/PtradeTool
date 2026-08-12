@@ -307,6 +307,7 @@ class StockCard(QFrame):
 
     def _handle_order_row_changed(self, row: OrderRow) -> None:
         self.align_order_input_digits()
+        self._refresh_warning_box()
         self.orderChanged.emit(row)
 
     def _handle_order_digit_width_changed(self, row: OrderRow) -> None:

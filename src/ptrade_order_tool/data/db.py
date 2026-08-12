@@ -98,6 +98,15 @@ create table if not exists daily_quotes (
     updated_at text not null,
     primary key (trade_date, ts_code)
 );
+
+create table if not exists daily_quote_fetch_state (
+    trade_date text not null,
+    ts_code text not null,
+    status text not null,
+    next_retry_at text not null,
+    updated_at text not null,
+    primary key (trade_date, ts_code)
+);
 """
 
 

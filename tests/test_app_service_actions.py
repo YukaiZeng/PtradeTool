@@ -196,6 +196,43 @@ def test_load_daily_quotes_silently_returns_cache_or_empty_on_sync_failure(sqlit
     assert service.load_daily_quotes(draft.manage_date, token="token", pro_client=FailingClient()) == {}
 
 
+def test_daily_quote_no_data_is_temporarily_suppressed_but_request_failure_is_not(sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+
+    service.cache_daily_quote_fetch_result(
+        draft.manage_date,
+        requested_ts_codes=["002153.SZ", "600000.SH"],
+        rows=[],
+        successful_ts_codes=["002153.SZ"],
+    )
+
+    assert service.daily_quote_ts_codes_to_fetch(draft.manage_date, ["002153.SZ", "600000.SH"]) == ["600000.SH"]
+
+
+def test_json_sync_rolls_back_ptrade_changes_when_order_replacement_fails(sqlite_conn, tmp_path, monkeypatch):
+    service, draft, order_dir = make_service(sqlite_conn, tmp_path)
+    ptrade_path = tmp_path / "ptrade_data" / "20260225.json"
+    original_cash = sqlite_conn.execute(
+        "select cash from fund_snapshots where manage_date = ?", (draft.manage_date,)
+    ).fetchone()["cash"]
+    (order_dir / "20260225.json").write_text("{}", encoding="utf-8")
+    original_replace_orders = service.drafts.replace_orders
+
+    def fail_after_order_replace(*args, **kwargs):
+        original_replace_orders(*args, **kwargs)
+        raise RuntimeError("order replacement failed")
+
+    monkeypatch.setattr(service.drafts, "replace_orders", fail_after_order_replace)
+
+    with pytest.raises(RuntimeError, match="order replacement failed"):
+        service.sync_json_to_draft(draft.manage_date)
+
+    assert ptrade_path.exists()
+    assert sqlite_conn.execute(
+        "select cash from fund_snapshots where manage_date = ?", (draft.manage_date,)
+    ).fetchone()["cash"] == original_cash
+
+
 def test_delete_with_snapshot_and_restore(sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)

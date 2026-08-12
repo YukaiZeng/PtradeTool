@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -221,6 +221,7 @@ class StockFilterTabs(QWidget):
 
 class StockUpdateWorker(QThread):
     finishedWithRows = Signal(str, list, list)
+    calendarRowsLoaded = Signal(str, list)
     failedWithMessage = Signal(str)
 
     def __init__(
@@ -253,6 +254,8 @@ class StockUpdateWorker(QThread):
                 calendar_rows = []
             if self.isInterruptionRequested():
                 return
+            if calendar_rows:
+                self.calendarRowsLoaded.emit(self.today, calendar_rows)
             stock_rows = client.query("stock_basic", fields="ts_code,symbol,name,list_status")
             stock_rows = prepare_stock_basic_rows(stock_rows, self.today)
         except MissingTushareToken as exc:
@@ -266,6 +269,7 @@ class StockUpdateWorker(QThread):
 
 class DailyQuotesWorker(QThread):
     finishedWithRows = Signal(str, list)
+    finishedWithResult = Signal(str, list, list, list)
 
     def __init__(
         self,
@@ -280,6 +284,8 @@ class DailyQuotesWorker(QThread):
 
     def run(self) -> None:
         rows: list[dict[str, object]] = []
+        successful_ts_codes: list[str] = []
+        failed_ts_codes: list[str] = []
         client = TushareProClient(self.token, timeout=5)
         for ts_code in dict.fromkeys(self.ts_codes):
             if self.isInterruptionRequested():
@@ -291,8 +297,11 @@ class DailyQuotesWorker(QThread):
                     if str(row.get("ts_code", "")) == ts_code
                 )
             except Exception:
+                failed_ts_codes.append(ts_code)
                 continue
+            successful_ts_codes.append(ts_code)
         self.finishedWithRows.emit(self.manage_date, rows)
+        self.finishedWithResult.emit(self.manage_date, rows, successful_ts_codes, failed_ts_codes)
 
 
 class MainWindow(QMainWindow):
@@ -315,6 +324,7 @@ class MainWindow(QMainWindow):
         self._daily_quotes_worker: DailyQuotesWorker | None = None
         self._background_workers: set[QThread] = set()
         self._daily_quote_workers_by_date: dict[str, QThread] = {}
+        self._daily_quote_failure_retry_at: dict[tuple[str, str], datetime] = {}
         self._stock_candidate_by_label: dict[str, dict[str, str]] = {}
         self._selected_stock_candidate: dict[str, str] | None = None
         self._suppress_candidate_popup = False
@@ -690,6 +700,9 @@ class MainWindow(QMainWindow):
         )
         self._track_background_worker(self._stock_update_worker)
         self._stock_update_worker.finishedWithRows.connect(self._handle_stock_update_rows_loaded)
+        calendar_rows_loaded = getattr(self._stock_update_worker, "calendarRowsLoaded", None)
+        if calendar_rows_loaded is not None:
+            calendar_rows_loaded.connect(self._handle_trade_calendar_rows_loaded)
         self._stock_update_worker.failedWithMessage.connect(self._handle_stock_update_failed)
         self._stock_update_worker.finished.connect(self.refresh_stock_update_button)
         self._stock_update_worker.finished.connect(self._handle_stock_update_worker_finished)
@@ -1208,7 +1221,14 @@ class MainWindow(QMainWindow):
             return
         if self._daily_quotes_worker and self._daily_quotes_worker.isRunning():
             self._daily_quotes_worker.requestInterruption()
-        missing_ts_codes = [ts_code for ts_code in dict.fromkeys(ts_codes) if ts_code not in cached_quotes]
+        missing_ts_codes = self.service.daily_quote_ts_codes_to_fetch(draft.manage_date, ts_codes)
+        now = datetime.now()
+        missing_ts_codes = [
+            ts_code for ts_code in missing_ts_codes
+            if self._daily_quote_failure_retry_at.get((draft.manage_date, ts_code), now) <= now
+        ]
+        if not missing_ts_codes:
+            return
         self._daily_quotes_worker = DailyQuotesWorker(
             draft.manage_date,
             token,
@@ -1216,7 +1236,11 @@ class MainWindow(QMainWindow):
         )
         self._daily_quote_workers_by_date[draft.manage_date] = self._daily_quotes_worker
         self._track_background_worker(self._daily_quotes_worker)
-        self._daily_quotes_worker.finishedWithRows.connect(self._handle_daily_quote_rows_loaded)
+        fetch_result_signal = getattr(self._daily_quotes_worker, "finishedWithResult", None)
+        if fetch_result_signal is not None:
+            fetch_result_signal.connect(self._handle_daily_quote_fetch_result)
+        else:
+            self._daily_quotes_worker.finishedWithRows.connect(self._handle_daily_quote_rows_loaded)
         self._daily_quotes_worker.finished.connect(self._handle_daily_quotes_worker_finished)
         self._daily_quotes_worker.start()
 
@@ -1234,6 +1258,29 @@ class MainWindow(QMainWindow):
         if not self.draft or self.draft.manage_date != manage_date:
             return
         self._handle_daily_quotes_loaded(manage_date, quotes)
+
+    def _handle_daily_quote_fetch_result(
+        self,
+        manage_date: str,
+        rows: list[dict[str, object]],
+        successful_ts_codes: list[str],
+        failed_ts_codes: list[str],
+    ) -> None:
+        if not self.service:
+            return
+        for ts_code in failed_ts_codes:
+            self._daily_quote_failure_retry_at[(manage_date, ts_code)] = datetime.now() + timedelta(minutes=1)
+        try:
+            quotes = self.service.cache_daily_quote_fetch_result(
+                manage_date,
+                requested_ts_codes=[*successful_ts_codes, *failed_ts_codes],
+                rows=rows,
+                successful_ts_codes=successful_ts_codes,
+            )
+        except Exception:
+            return
+        if self.draft and self.draft.manage_date == manage_date:
+            self._handle_daily_quotes_loaded(manage_date, quotes)
 
     def _handle_daily_quotes_loaded(self, manage_date: str, quotes: dict[str, DailyQuote]) -> None:
         if not self.draft or self.draft.manage_date != manage_date or not quotes:
@@ -1758,6 +1805,10 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"股票基础数据更新失败: {exc}")
             return
         self._handle_stock_update_finished(count)
+
+    def _handle_trade_calendar_rows_loaded(self, today: str, calendar_rows: list[dict[str, object]]) -> None:
+        if self.service and calendar_rows:
+            self.service.calendar.record_sync_result(calendar_rows, synced_on=today)
 
     def _handle_stock_update_worker_finished(self) -> None:
         worker = self.sender()

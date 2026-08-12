@@ -288,7 +288,8 @@ class AppService:
         calendar_rows: list[dict[str, object]],
         stock_rows: list[dict[str, object] | tuple[str, str, str, str, str, str, str]],
     ) -> int:
-        self.calendar.record_sync_result(calendar_rows, synced_on=today)
+        if calendar_rows and not self.calendar.has_sync_for(today):
+            self.calendar.record_sync_result(calendar_rows, synced_on=today)
         if not self.calendar.is_trade_day(today) and getattr(self.stock_matcher, "has_any_stock_data", lambda: False)():
             return 0
         if not hasattr(self.stock_matcher, "upsert_stock_basic"):
@@ -378,30 +379,38 @@ class AppService:
         if not plan.ptrade_json_path and not plan.order_json_path:
             raise FileNotFoundError(f"No JSON found for manage date: {manage_date}")
 
-        if plan.ptrade_json_path:
-            imported = parse_ptrade_json(plan.ptrade_json_path, self.stock_matcher)
-            export_json_path = self._export_json_path(manage_date)
-            try:
-                current = self.drafts.load_draft(manage_date)
-                if current.export_json_path:
-                    export_json_path = current.export_json_path
-            except KeyError:
-                pass
-            self.drafts.sync_fund_and_holdings(
-                imported,
-                expected_trade_date=self.calendar.next_trade_day(manage_date),
-                ptrade_json_path=str(plan.ptrade_json_path),
-                export_json_path=export_json_path,
-            )
-        elif plan.order_json_path:
-            try:
-                self.drafts.load_draft(manage_date)
-            except KeyError:
-                self._create_or_open_blank(manage_date)
+        self.conn.execute("begin")
+        try:
+            if plan.ptrade_json_path:
+                imported = parse_ptrade_json(plan.ptrade_json_path, self.stock_matcher)
+                export_json_path = self._export_json_path(manage_date)
+                try:
+                    current = self.drafts.load_draft(manage_date)
+                    if current.export_json_path:
+                        export_json_path = current.export_json_path
+                except KeyError:
+                    pass
+                self.drafts.sync_fund_and_holdings(
+                    imported,
+                    expected_trade_date=self.calendar.next_trade_day(manage_date),
+                    ptrade_json_path=str(plan.ptrade_json_path),
+                    export_json_path=export_json_path,
+                    commit=False,
+                )
+            elif plan.order_json_path:
+                try:
+                    self.drafts.load_draft(manage_date)
+                except KeyError:
+                    self._create_or_open_blank(manage_date, commit=False)
 
-        if plan.order_json_path:
-            self.drafts.replace_orders(manage_date, self._load_order_json(plan.order_json_path))
-            self.drafts.mark_exported(manage_date)
+            if plan.order_json_path:
+                self.drafts.replace_orders(manage_date, self._load_order_json(plan.order_json_path), commit=False)
+                self.drafts.mark_exported(manage_date, commit=False)
+        except Exception:
+            self.conn.rollback()
+            raise
+        else:
+            self.conn.commit()
 
         self.logger.info(
             "json_synced manage_date=%s ptrade_json=%s order_json=%s",
@@ -448,6 +457,25 @@ class AppService:
     ) -> dict[str, DailyQuote]:
         self.daily_quotes.upsert_daily_quotes(rows, updated_at=datetime.now().strftime("%Y%m%d%H%M%S"))
         return self.daily_quotes.load_quotes(trade_date, ts_codes=ts_codes)
+
+    def daily_quote_ts_codes_to_fetch(self, trade_date: str, ts_codes: list[str]) -> list[str]:
+        return self.daily_quotes.ts_codes_to_fetch(trade_date, ts_codes)
+
+    def cache_daily_quote_fetch_result(
+        self,
+        trade_date: str,
+        *,
+        requested_ts_codes: list[str],
+        rows: list[dict[str, object]],
+        successful_ts_codes: list[str],
+    ) -> dict[str, DailyQuote]:
+        self.daily_quotes.record_fetch_result(
+            trade_date,
+            requested_ts_codes=requested_ts_codes,
+            rows=rows,
+            successful_ts_codes=successful_ts_codes,
+        )
+        return self.daily_quotes.load_quotes(trade_date, ts_codes=requested_ts_codes)
 
     def _create_or_open_from_path(self, ptrade_json_path: Path, *, overwrite: bool) -> SessionDraft:
         imported = parse_ptrade_json(ptrade_json_path, self.stock_matcher)
@@ -500,7 +528,7 @@ class AppService:
             return False
         return True
 
-    def _create_or_open_blank(self, manage_date: str) -> SessionDraft:
+    def _create_or_open_blank(self, manage_date: str, *, commit: bool = True) -> SessionDraft:
         imported = ImportedPtradeData(manage_date=manage_date, fund=self._empty_fund(), holdings=[])
         export_json_path = self._export_json_path(manage_date)
         self.logger.info("blank_draft_opened manage_date=%s", manage_date)
@@ -510,6 +538,7 @@ class AppService:
             ptrade_json_path="",
             export_json_path=export_json_path,
             overwrite=False,
+            commit=commit,
         ))
 
     def _empty_draft(self, manage_date: str, *, export_state: str = "draft") -> SessionDraft:

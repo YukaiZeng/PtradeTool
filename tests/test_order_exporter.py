@@ -84,6 +84,19 @@ def test_export_order_json_writes_standard_numeric_price(sqlite_conn, tmp_path):
     assert json.loads(text)["002153.SZ"]["buy_limit"][0]["price"] == 5
 
 
+def test_export_order_json_replaces_target_atomically_without_leaving_temp_file(sqlite_conn, tmp_path):
+    store, draft = make_store_with_draft(sqlite_conn)
+    order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("5"), 1400)
+    store.confirm_order(order_id)
+    output_path = tmp_path / "20260225.json"
+    output_path.write_text('{"old": true}', encoding="utf-8")
+
+    export_order_json(store.load_draft("20260225"), output_path, allow_overwrite=True)
+
+    assert json.loads(output_path.read_text(encoding="utf-8"))["002153.SZ"]["buy_limit"][0]["price"] == 5
+    assert list(tmp_path.glob(".20260225.json.*.tmp")) == []
+
+
 def test_unconfirmed_order_blocks_export(sqlite_conn):
     store, draft = make_store_with_draft(sqlite_conn)
     store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)

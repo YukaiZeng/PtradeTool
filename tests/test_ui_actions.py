@@ -1121,6 +1121,22 @@ def test_editing_confirmed_order_marks_it_unconfirmed(qtbot, sqlite_conn, tmp_pa
     assert "订单已修改，需重新确认" in window.status_label.text()
 
 
+def test_inline_order_edit_refreshes_stock_warning(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)
+    service.update_and_confirm_order(order_id, price=Decimal("12.65"), shares=1400, order_type="sell_profit")
+    window = MainWindow(service.load_draft("20260225"), service)
+    qtbot.addWidget(window)
+    row = next(row for row in window.findChildren(OrderRow) if row.order.id == order_id)
+
+    row.shares_input.set_value(2800)
+
+    qtbot.waitUntil(lambda: all(
+        "止盈合计" not in label.text()
+        for label in window._stock_cards_by_code["002153.SZ"].findChildren(QLabel, "stock_card_warning")
+    ))
+
+
 def test_changing_order_type_moves_order_group(qtbot, sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)

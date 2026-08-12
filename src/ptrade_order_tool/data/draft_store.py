@@ -33,6 +33,7 @@ class DraftStore:
         export_json_path: str,
         previous_order_path: Path | Iterable[Path] | None = None,
         overwrite: bool = False,
+        commit: bool = True,
     ) -> SessionDraft:
         existing = self._session_exists(imported.manage_date)
         if existing and not overwrite:
@@ -81,9 +82,11 @@ class DraftStore:
                         source="inherited",
                         warning="继承上一有效交易日订单，需确认",
                     )
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
         except Exception:
-            self.conn.rollback()
+            if commit:
+                self.conn.rollback()
             raise
         return self.load_draft(imported.manage_date)
 
@@ -282,6 +285,7 @@ class DraftStore:
         expected_trade_date: str | None,
         ptrade_json_path: str,
         export_json_path: str,
+        commit: bool = True,
     ) -> None:
         now = datetime.now().isoformat(timespec="seconds")
         existing = self._session_exists(imported.manage_date)
@@ -344,15 +348,19 @@ class DraftStore:
                 (imported.manage_date,),
             )
             self._mark_modified(imported.manage_date)
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
         except Exception:
-            self.conn.rollback()
+            if commit:
+                self.conn.rollback()
             raise
 
     def replace_orders(
         self,
         manage_date: str,
         orders_by_stock: dict[str, dict[str, Any]],
+        *,
+        commit: bool = True,
     ) -> None:
         now = datetime.now().isoformat(timespec="seconds")
         try:
@@ -428,9 +436,11 @@ class DraftStore:
                             ),
                         )
             self._mark_modified(manage_date)
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
         except Exception:
-            self.conn.rollback()
+            if commit:
+                self.conn.rollback()
             raise
 
     def save_order_change(self, order_id: int, *, price: Decimal, shares: int, order_type: OrderType) -> None:
@@ -608,12 +618,13 @@ class DraftStore:
         latest = row["latest"] if row else None
         return bool(latest and manage_date < latest)
 
-    def mark_exported(self, manage_date: str) -> None:
+    def mark_exported(self, manage_date: str, *, commit: bool = True) -> None:
         self.conn.execute(
             "update sessions set export_state = 'exported', updated_at = ? where manage_date = ?",
             (datetime.now().isoformat(timespec="seconds"), manage_date),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def list_manage_dates(self) -> list[str]:
         rows = self.conn.execute(

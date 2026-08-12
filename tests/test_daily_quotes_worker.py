@@ -48,3 +48,19 @@ def test_daily_quotes_worker_deduplicates_requested_codes(monkeypatch):
         {"ts_code": "600000.SH", "trade_date": "20260225"},
         {"ts_code": "000001.SZ", "trade_date": "20260225"},
     ])]
+
+
+def test_daily_quotes_worker_reports_successes_separately_from_request_failures(monkeypatch):
+    def query(_self, _api_name, **kwargs):
+        if kwargs["ts_code"] == "600000.SH":
+            return []
+        raise RuntimeError("temporary network failure")
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.TushareProClient.query", query)
+    worker = DailyQuotesWorker("20260225", "token", ["600000.SH", "000001.SZ"])
+    captured = []
+    worker.finishedWithResult.connect(lambda manage_date, rows, successful, failed: captured.append((manage_date, rows, successful, failed)))
+
+    worker.run()
+
+    assert captured == [("20260225", [], ["600000.SH"], ["000001.SZ"])]

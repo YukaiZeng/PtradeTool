@@ -119,6 +119,26 @@ def test_stock_update_worker_skips_trade_calendar_when_already_synced(monkeypatc
     assert queried == ["stock_basic"]
 
 
+def test_stock_update_worker_emits_calendar_rows_even_when_stock_basic_fails(monkeypatch):
+    class FakeClient:
+        def __init__(self, _token, timeout=30):
+            pass
+
+        def query(self, api_name, **_kwargs):
+            if api_name == "trade_cal":
+                return [{"cal_date": "20260609", "is_open": 1}]
+            raise RuntimeError("stock_basic unavailable")
+
+    monkeypatch.setattr("ptrade_order_tool.ui.main_window.TushareProClient", FakeClient)
+    worker = StockUpdateWorker("token", "20260609", "20260101", "20271231")
+    calendars = []
+    worker.calendarRowsLoaded.connect(lambda today, rows: calendars.append((today, rows)))
+
+    worker.run()
+
+    assert calendars == [("20260609", [{"cal_date": "20260609", "is_open": 1}])]
+
+
 def test_stock_update_result_uses_worker_date_for_persistence():
     captured = []
 

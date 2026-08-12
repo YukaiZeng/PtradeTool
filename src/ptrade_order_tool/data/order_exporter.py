@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from ptrade_order_tool.models import DailyQuote, ExportValidation, OrderDraft, SessionDraft, StockDraft
-from ptrade_order_tool.order_validation import order_price_violations
+from ptrade_order_tool.order_validation import order_price_violations, profit_loss_price_violations
 
 
 ORDER_TYPES = ("buy_stop", "buy_limit", "sell_profit", "sell_loss")
@@ -33,6 +33,8 @@ def validate_export(
         quote = daily_quotes.get(stock.ts_code) if daily_quotes else None
         for violation in order_price_violations(confirmed, quote.close if quote else None):
             validation.blockers.append(f"{stock.ts_code} {stock.stock_name} {violation}")
+        for violation in profit_loss_price_violations(confirmed):
+            validation.blockers.append(f"{stock.ts_code} {stock.stock_name} {violation}")
         if not confirmed:
             continue
 
@@ -40,7 +42,6 @@ def validate_export(
             _validate_holding_totals(stock, confirmed, validation)
         else:
             _validate_opening_totals(stock, confirmed, validation)
-        _validate_profit_loss_prices(stock, confirmed, validation)
 
     return validation
 
@@ -144,21 +145,6 @@ def _validate_opening_totals(
         validation.warnings.append(
             f"{stock.ts_code} {stock.stock_name} 止损合计 {_format_shares(loss_total)} 不等于买单合计 {_format_shares(buy_total)}"
         )
-
-
-def _validate_profit_loss_prices(
-    stock: StockDraft,
-    confirmed: list[OrderDraft],
-    validation: ExportValidation,
-) -> None:
-    profit_orders = [order for order in confirmed if order.order_type == "sell_profit"]
-    loss_orders = [order for order in confirmed if order.order_type == "sell_loss"]
-    for profit_order in profit_orders:
-        for loss_order in loss_orders:
-            if profit_order.price < loss_order.price:
-                validation.warnings.append(
-                    f"{stock.ts_code} {stock.stock_name} 止盈价格 {profit_order.price:.2f} 小于止损价格 {loss_order.price:.2f}"
-                )
 
 
 def _json_price(price: Decimal) -> int | float:

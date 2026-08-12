@@ -25,3 +25,15 @@ def order_price_violations(orders: Iterable[OrderDraft], close: Decimal | None) 
 
 def buy_price_violations(orders: Iterable[OrderDraft], close: Decimal | None) -> list[str]:
     return order_price_violations(orders, close)
+
+
+def profit_loss_price_violations(orders: Iterable[OrderDraft]) -> list[str]:
+    order_list = list(orders)
+    profit_orders = [order for order in order_list if order.order_type == "sell_profit"]
+    loss_orders = [order for order in order_list if order.order_type == "sell_loss"]
+    return [
+        f"止损价格 {loss_order.price:.2f} 不低于止盈价格 {profit_order.price:.2f}（阻断）"
+        for profit_order in profit_orders
+        for loss_order in loss_orders
+        if loss_order.price >= profit_order.price
+    ]

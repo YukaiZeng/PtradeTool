@@ -203,7 +203,7 @@ def test_holding_sell_total_mismatch_warns_not_blocks(sqlite_conn):
     assert any("止盈合计 100 不等于持仓数量 200" in item for item in validation.warnings)
 
 
-def test_profit_price_below_loss_price_warns_not_blocks(sqlite_conn):
+def test_stop_loss_must_be_strictly_lower_than_take_profit_without_close(sqlite_conn):
     store, draft = make_store_with_draft(sqlite_conn)
     profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("10.50"), 2800)
     loss_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("10.99"), 2800)
@@ -212,8 +212,21 @@ def test_profit_price_below_loss_price_warns_not_blocks(sqlite_conn):
 
     validation = validate_export(store.load_draft("20260225"))
 
-    assert validation.can_export is True
-    assert any("止盈价格 10.50 小于止损价格 10.99" in item for item in validation.warnings)
+    assert validation.can_export is False
+    assert any("止损价格 10.99 不低于止盈价格 10.50（阻断）" in item for item in validation.blockers)
+
+
+def test_equal_stop_loss_and_take_profit_blocks_export_without_close(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("10.50"), 100)
+    loss_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("10.50"), 100)
+    store.confirm_order(profit_id)
+    store.confirm_order(loss_id)
+
+    validation = validate_export(store.load_draft("20260225"))
+
+    assert validation.can_export is False
+    assert any("止损价格 10.50 不低于止盈价格 10.50（阻断）" in item for item in validation.blockers)
 
 
 def test_opening_sell_total_mismatch_warns_not_blocks(sqlite_conn):

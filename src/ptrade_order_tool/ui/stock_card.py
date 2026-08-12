@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptrade_order_tool.models import DailyQuote, OrderDraft, StockDraft
-from ptrade_order_tool.order_validation import order_price_violations
+from ptrade_order_tool.order_validation import order_price_violations, profit_loss_price_violations
 from ptrade_order_tool.ui.order_row import ORDER_LABELS, OrderRow
 
 
@@ -366,10 +366,7 @@ class StockCard(QFrame):
                 warnings.append(f"止盈合计 {profit_total:,}，不等于买单合计 {buy_total:,}")
             if (buy_total or loss_total) and loss_total != buy_total:
                 warnings.append(f"止损合计 {loss_total:,}，不等于买单合计 {buy_total:,}")
-        for profit_order in grouped.get("sell_profit", []):
-            for loss_order in grouped.get("sell_loss", []):
-                if profit_order.price < loss_order.price:
-                    warnings.append(f"止盈价格 {profit_order.price:.2f} 小于止损价格 {loss_order.price:.2f}")
+        warnings.extend(profit_loss_price_violations(self.stock.orders))
         warnings.extend(
             order_price_violations(
                 self.stock.orders,

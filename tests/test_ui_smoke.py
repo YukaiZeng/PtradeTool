@@ -1004,7 +1004,7 @@ def test_stock_card_shows_opening_and_price_warnings(qtbot):
     assert "无买单，但存在卖单计划" in warnings
     assert "止盈合计 500，不等于买单合计 0" in warnings
     assert "止损合计 500，不等于买单合计 0" in warnings
-    assert "止盈价格 10.00 小于止损价格 11.00" in warnings
+    assert "止损价格 11.00 不低于止盈价格 10.00（阻断）" in warnings
 
 
 def test_stock_card_shows_opening_warnings_without_sell_orders(qtbot):

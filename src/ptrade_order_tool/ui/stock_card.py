@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptrade_order_tool.models import DailyQuote, OrderDraft, StockDraft
-from ptrade_order_tool.order_validation import buy_price_violations
+from ptrade_order_tool.order_validation import order_price_violations
 from ptrade_order_tool.ui.order_row import ORDER_LABELS, OrderRow
 
 
@@ -371,7 +371,7 @@ class StockCard(QFrame):
                 if profit_order.price < loss_order.price:
                     warnings.append(f"止盈价格 {profit_order.price:.2f} 小于止损价格 {loss_order.price:.2f}")
         warnings.extend(
-            buy_price_violations(
+            order_price_violations(
                 self.stock.orders,
                 self.daily_quote.close if self.daily_quote else None,
             )

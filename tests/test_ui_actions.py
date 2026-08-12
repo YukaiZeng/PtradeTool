@@ -238,6 +238,25 @@ def test_switching_draft_defaults_stock_jump_to_first_visible_stock_when_selecti
     replacement_draft, _ = service.delete_stock_with_snapshot(draft.manage_date, "300162.SZ")
     window.set_draft(replacement_draft, default_to_holding=True)
 
+
+def test_clicking_stock_filter_tab_scrolls_first_visible_card_to_top(qtbot, sqlite_conn, tmp_path):
+    service, draft, _ = make_service(sqlite_conn, tmp_path)
+    window = MainWindow(draft, service)
+    qtbot.addWidget(window)
+    window.resize(900, 460)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.stock_jump_combo.setCurrentIndex(window.stock_jump_combo.findData("300251.SZ", Qt.UserRole))
+    window.stock_jump_combo.activated.emit(window.stock_jump_combo.currentIndex())
+    qtbot.wait(30)
+    qtbot.mouseClick(window.tabs._buttons[2], Qt.LeftButton)
+    qtbot.wait(30)
+
+    first_opening = next(card for card in window._stock_cards_by_code.values() if card.stock.is_holding)
+    assert window.stock_jump_combo.currentData(Qt.UserRole) == first_opening.stock.ts_code
+    assert first_opening.mapTo(window.stock_scroll.viewport(), QPoint(0, 0)).y() == 0
+
     assert window.stock_jump_combo.currentIndex() == 0
     assert window.stock_jump_combo.currentData(Qt.UserRole) == "002153.SZ"
 

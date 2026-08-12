@@ -148,6 +148,35 @@ def test_buy_price_checks_allow_boundary_and_skip_missing_quote(sqlite_conn):
     assert validate_export(reloaded).can_export is True
 
 
+def test_sell_prices_are_checked_against_close_with_explicit_boundaries(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("9.99"), 100)
+    loss_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("10.00"), 100)
+    store.confirm_order(profit_id)
+    store.confirm_order(loss_id)
+
+    validation = validate_export(
+        store.load_draft("20260225"),
+        daily_quotes={"002153.SZ": make_daily_quote("002153.SZ", "10.00")},
+    )
+
+    assert validation.can_export is False
+    assert any("止盈价格 9.99 低于收盘价 10.00（阻断）" in item for item in validation.blockers)
+    assert any("止损价格 10.00 不小于收盘价 10.00（阻断）" in item for item in validation.blockers)
+
+
+def test_sell_price_boundaries_are_allowed_and_missing_close_is_ignored(sqlite_conn):
+    store, draft = make_store_with_draft(sqlite_conn)
+    profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("10.00"), 100)
+    loss_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_loss", Decimal("9.99"), 100)
+    store.confirm_order(profit_id)
+    store.confirm_order(loss_id)
+    reloaded = store.load_draft("20260225")
+
+    assert validate_export(reloaded, daily_quotes={"002153.SZ": make_daily_quote("002153.SZ", "10.00")}).can_export is True
+    assert validate_export(reloaded).can_export is True
+
+
 def test_export_order_json_rechecks_buy_prices_against_close(sqlite_conn, tmp_path):
     store, draft = make_store_with_draft(sqlite_conn)
     order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("10.00"), 100)

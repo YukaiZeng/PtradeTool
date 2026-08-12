@@ -501,6 +501,30 @@ def test_stock_card_formats_holding_value_profit_and_daily_amount(qtbot):
     assert card.findChild(QLabel, "stock_daily_amount").text() == "2.50亿"
 
 
+def test_stock_card_shows_sell_price_close_blockers(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="浦发银行",
+        is_holding=False,
+        orders=[
+            OrderDraft("sell_profit", Decimal("9.99"), 100),
+            OrderDraft("sell_loss", Decimal("10.00"), 100),
+        ],
+    )
+    quote = DailyQuote(
+        ts_code="600000.SH", trade_date="20260225", open=Decimal("10"), high=Decimal("10"),
+        low=Decimal("10"), close=Decimal("10"), pre_close=Decimal("10"), change=Decimal("0"),
+        pct_chg=Decimal("0"), vol=Decimal("0"), amount=Decimal("0"),
+    )
+    card = StockCard(stock, daily_quote=quote)
+    qtbot.addWidget(card)
+
+    warnings = [label.text() for label in card.findChildren(QLabel, "stock_card_warning")]
+
+    assert any("止盈价格 9.99 低于收盘价 10.00（阻断）" in item for item in warnings)
+    assert any("止损价格 10.00 不小于收盘价 10.00（阻断）" in item for item in warnings)
+
+
 def test_stock_card_shows_holding_warnings_without_condition_orders(qtbot):
     stock = StockDraft(
         ts_code="600000.SH",

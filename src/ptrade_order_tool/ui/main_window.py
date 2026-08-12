@@ -953,6 +953,17 @@ class MainWindow(QMainWindow):
             select_first_when_selection_is_absent=select_first_when_selection_is_absent,
             force_first=force_first,
         )
+        if force_first:
+            visible_cards = self._visible_stock_cards_in_order()
+            if visible_cards:
+                self._position_stock_card_at_viewport_top(visible_cards[0])
+            else:
+                QTimer.singleShot(
+                    0,
+                    lambda: self.stock_scroll.verticalScrollBar().setValue(
+                        self.stock_scroll.verticalScrollBar().minimum()
+                    ),
+                )
 
     def _refresh_stock_jump_combo(
         self,

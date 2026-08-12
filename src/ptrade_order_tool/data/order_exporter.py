@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from ptrade_order_tool.models import DailyQuote, ExportValidation, OrderDraft, SessionDraft, StockDraft
-from ptrade_order_tool.order_validation import buy_price_violations
+from ptrade_order_tool.order_validation import order_price_violations
 
 
 ORDER_TYPES = ("buy_stop", "buy_limit", "sell_profit", "sell_loss")
@@ -31,7 +31,7 @@ def validate_export(
 
         confirmed = [order for order in stock.orders if order.confirmed]
         quote = daily_quotes.get(stock.ts_code) if daily_quotes else None
-        for violation in buy_price_violations(confirmed, quote.close if quote else None):
+        for violation in order_price_violations(confirmed, quote.close if quote else None):
             validation.blockers.append(f"{stock.ts_code} {stock.stock_name} {violation}")
         if not confirmed:
             continue

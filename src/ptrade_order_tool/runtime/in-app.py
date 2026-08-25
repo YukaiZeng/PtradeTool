@@ -120,7 +120,7 @@ def before_trading_start(context, data):
 
     # 读取order数据
     order_date = get_trading_day_by_date(g.current_date, day=-1) # 当前日期前一个交易日
-    order_json_path = g.notebook_path + g.order_dir + f"{order_date}.json"
+    order_json_path = g.notebook_path + g.order_dir + f"order_{order_date}.json"
     try:
         order_result = read_json(order_json_path)
     except Exception as e:
@@ -546,11 +546,11 @@ def after_trading_end(context, data):
         "Order": Order_dict,
         "Entrust": Entrust_dict
     }
-    output_json_path = g.notebook_path + g.output_dir + f"{g.current_date}.json"
+    output_json_path = g.notebook_path + g.output_dir + f"ptrade_{g.current_date}.json"
     update_json(output_json_path, summary)
     
     # 日志
-    relative_path = g.output_dir + f"{g.current_date}.json"
+    relative_path = g.output_dir + f"ptrade_{g.current_date}.json"
     log.info(f"盘后整理数据已存盘，路径: {relative_path}")
     
     log.info("盘后处理完毕")

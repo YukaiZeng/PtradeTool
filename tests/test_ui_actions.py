@@ -802,7 +802,7 @@ def test_sync_json_action_is_enabled_only_when_json_differs(qtbot, sqlite_conn, 
 
     assert window.sync_json_action.isEnabled() is False
 
-    (order_dir / "20260225.json").write_text(
+    (order_dir / "order_20260225.json").write_text(
         json.dumps({"002153.SZ": {"stock_name": "石基信息", "buy_limit": [{"price": 11.4, "shares": 1400}]}}, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -815,7 +815,7 @@ def test_sync_json_action_is_enabled_only_when_json_differs(qtbot, sqlite_conn, 
 def test_sync_json_action_updates_ui_and_confirms_orders(qtbot, sqlite_conn, tmp_path):
     service, draft, order_dir = make_service(sqlite_conn, tmp_path)
     service.drafts.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_limit", Decimal("8.8"), 1000)
-    (order_dir / "20260225.json").write_text(
+    (order_dir / "order_20260225.json").write_text(
         json.dumps({"002153.SZ": {"stock_name": "石基信息", "buy_limit": [{"price": 11.4, "shares": 1400}]}}, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -859,9 +859,9 @@ def test_export_button_writes_order_json(qtbot, sqlite_conn, tmp_path, monkeypat
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
     qtbot.mouseClick(window.export_button, Qt.LeftButton)
 
-    assert (order_dir / "20260225.json").exists()
+    assert (order_dir / "order_20260225.json").exists()
     assert window.status_label.text().startswith("导出完成:")
-    assert window.status_label.toolTip() == f"导出完成: {order_dir / '20260225.json'}"
+    assert window.status_label.toolTip() == f"导出完成: {order_dir / 'order_20260225.json'}"
 
 
 def test_export_keeps_empty_stock_jump_selection(qtbot, sqlite_conn, tmp_path, monkeypatch):
@@ -1183,7 +1183,7 @@ def test_export_button_refreshes_after_overwrite(qtbot, sqlite_conn, tmp_path, m
     service, draft, order_dir = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
     service.update_and_confirm_order(order_id, price=Decimal("11.4"), shares=1400, order_type="buy_limit")
-    (order_dir / "20260225.json").write_text("{}", encoding="utf-8")
+    (order_dir / "order_20260225.json").write_text("{}", encoding="utf-8")
     window = MainWindow(service.load_draft("20260225"), service)
     qtbot.addWidget(window)
 
@@ -1193,14 +1193,14 @@ def test_export_button_refreshes_after_overwrite(qtbot, sqlite_conn, tmp_path, m
     assert service.load_draft("20260225").export_state == "exported"
     assert window.draft.export_state == "exported"
     assert window.status_label.text().startswith("导出完成:")
-    assert window.status_label.toolTip() == f"导出完成: {order_dir / '20260225.json'}"
+    assert window.status_label.toolTip() == f"导出完成: {order_dir / 'order_20260225.json'}"
 
 
 def test_manual_import_action_imports_selected_json(qtbot, sqlite_conn, tmp_path, monkeypatch):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
     window = MainWindow(draft, service)
     qtbot.addWidget(window)
-    manual_path = tmp_path / "ptrade_data" / "20260225.json"
+    manual_path = tmp_path / "ptrade_data" / "ptrade_20260225.json"
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(manual_path), ""))
 
     window.manual_import_action.trigger()

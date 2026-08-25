@@ -25,7 +25,7 @@ def test_create_draft_imports_holdings_and_inherits_only_sell_orders(sqlite_conn
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=PREVIOUS_ORDER,
     )
 
@@ -41,7 +41,7 @@ def test_create_draft_imports_holdings_and_inherits_only_sell_orders(sqlite_conn
 def test_inherited_sell_orders_keep_previous_order_shares(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text(
         '{"300251.SZ": {"sell_profit": [{"price": 12.65, "shares": 100}], "sell_loss": [{"price": 10.99, "shares": 100}]}}',
         encoding="utf-8",
@@ -51,7 +51,7 @@ def test_inherited_sell_orders_keep_previous_order_shares(sqlite_conn, tmp_path)
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=previous_order_path,
     )
 
@@ -71,7 +71,7 @@ def test_create_draft_does_not_inherit_sell_orders_for_zero_current_amount(sqlit
     zero_holding = next(holding for holding in imported.holdings if holding.ts_code == "002153.SZ")
     zero_holding.current_amount = 0
     zero_holding.enable_amount = 0
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text(
         '{"002153.SZ": {"sell_profit": [{"price": 12.65, "shares": 2800}], "sell_loss": [{"price": 10.99, "shares": 2800}]}}',
         encoding="utf-8",
@@ -81,7 +81,7 @@ def test_create_draft_does_not_inherit_sell_orders_for_zero_current_amount(sqlit
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=previous_order_path,
     )
 
@@ -95,7 +95,7 @@ def test_create_draft_does_not_inherit_sell_orders_for_zero_current_amount(sqlit
 def test_sync_fund_and_holdings_removes_inherited_sell_orders_for_closed_positions(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text(
         '{"002153.SZ": {"sell_profit": [{"price": 12.65, "shares": 2800}]}}',
         encoding="utf-8",
@@ -104,7 +104,7 @@ def test_sync_fund_and_holdings_removes_inherited_sell_orders_for_closed_positio
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=previous_order_path,
     )
     imported = create_imported()
@@ -116,7 +116,7 @@ def test_sync_fund_and_holdings_removes_inherited_sell_orders_for_closed_positio
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
 
     draft = store.load_draft("20260225")
@@ -130,7 +130,7 @@ def test_sync_fund_and_holdings_removes_inherited_sell_orders_for_closed_positio
 def test_load_draft_hides_legacy_inherited_sell_orders_for_zero_current_amount(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text(
         '{"002153.SZ": {"sell_loss": [{"price": 10.99, "shares": 2800}]}}',
         encoding="utf-8",
@@ -139,7 +139,7 @@ def test_load_draft_hides_legacy_inherited_sell_orders_for_zero_current_amount(s
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=previous_order_path,
     )
     sqlite_conn.execute(
@@ -156,12 +156,12 @@ def test_load_draft_hides_legacy_inherited_sell_orders_for_zero_current_amount(s
 def test_inherited_sell_orders_stop_at_nearest_effective_stock_day(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
-    newer_order_path = tmp_path / "20260225.json"
+    newer_order_path = tmp_path / "order_20260225.json"
     newer_order_path.write_text(
         '{"002153.SZ": {"sell_profit": [{"price": 12.65, "shares": 2800}]}}',
         encoding="utf-8",
     )
-    older_order_path = tmp_path / "20260224.json"
+    older_order_path = tmp_path / "order_20260224.json"
     older_order_path.write_text(
         '{"002153.SZ": {"sell_loss": [{"price": 10.99, "shares": 2800}]}}',
         encoding="utf-8",
@@ -171,7 +171,7 @@ def test_inherited_sell_orders_stop_at_nearest_effective_stock_day(sqlite_conn, 
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=[newer_order_path, older_order_path],
     )
 
@@ -181,17 +181,49 @@ def test_inherited_sell_orders_stop_at_nearest_effective_stock_day(sqlite_conn, 
     ]
 
 
+def test_create_draft_inherits_unfilled_previous_day_pullback_plan(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    store = DraftStore(sqlite_conn)
+    previous_order_path = tmp_path / "order_20260224.json"
+    previous_order_path.write_text(
+        (
+            '{"600000.SH": {"stock_name": "浦发银行", '
+            '"buy_limit": [{"price": 9.50, "shares": 1000}], '
+            '"sell_profit": [{"price": 10.50, "shares": 1000}], '
+            '"sell_loss": [{"price": 9.00, "shares": 1000}]}}'
+        ),
+        encoding="utf-8",
+    )
+
+    draft = store.create_draft(
+        create_imported(),
+        expected_trade_date="20260226",
+        ptrade_json_path=str(PTRADER_FIXTURE),
+        export_json_path="/tmp/order_data/order_20260225.json",
+        previous_pullback_order_path=previous_order_path,
+    )
+
+    pullback_stock = next(stock for stock in draft.stocks if stock.ts_code == "600000.SH")
+    assert pullback_stock.stock_name == "浦发银行"
+    assert pullback_stock.is_holding is False
+    assert [(order.order_type, order.price, order.shares, order.confirmed, order.source) for order in pullback_stock.orders] == [
+        ("buy_limit", Decimal("9.50"), 1000, False, "inherited"),
+        ("sell_profit", Decimal("10.50"), 1000, False, "inherited"),
+        ("sell_loss", Decimal("9.00"), 1000, False, "inherited"),
+    ]
+
+
 def test_create_draft_ignores_malformed_previous_order_json(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text("{broken", encoding="utf-8")
 
     draft = store.create_draft(
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=previous_order_path,
     )
 
@@ -202,7 +234,7 @@ def test_create_draft_ignores_malformed_previous_order_json(sqlite_conn, tmp_pat
 def test_create_draft_ignores_malformed_previous_order_items(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     store = DraftStore(sqlite_conn)
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text(
         '{"002153.SZ": {"sell_profit": [{"price": 12.5}, "bad"], "sell_loss": {"price": 9.9}}}',
         encoding="utf-8",
@@ -212,7 +244,7 @@ def test_create_draft_ignores_malformed_previous_order_items(sqlite_conn, tmp_pa
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=previous_order_path,
     )
 
@@ -229,7 +261,7 @@ def test_existing_draft_is_not_overwritten(sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=None,
     )
     store.add_order(first.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
@@ -238,7 +270,7 @@ def test_existing_draft_is_not_overwritten(sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=PREVIOUS_ORDER,
     )
 
@@ -253,7 +285,7 @@ def test_load_draft_recomputes_next_trade_available_cash_from_totals(sqlite_conn
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     sqlite_conn.execute(
         "update fund_snapshots set calibrated_cash = ? where manage_date = ?",
@@ -274,11 +306,11 @@ def test_overwrite_draft_rolls_back_when_inherited_order_is_invalid(sqlite_conn,
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
         previous_order_path=None,
     )
     order_id = store.add_order(original.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
-    previous_order_path = tmp_path / "20260224.json"
+    previous_order_path = tmp_path / "order_20260224.json"
     previous_order_path.write_text(
         '{"002153.SZ": {"sell_profit": [{"price": "bad", "shares": 2800}]}}',
         encoding="utf-8",
@@ -289,7 +321,7 @@ def test_overwrite_draft_rolls_back_when_inherited_order_is_invalid(sqlite_conn,
             imported,
             expected_trade_date="20260226",
             ptrade_json_path=str(PTRADER_FIXTURE),
-            export_json_path="/tmp/order_data/20260225.json",
+            export_json_path="/tmp/order_data/order_20260225.json",
             previous_order_path=previous_order_path,
             overwrite=True,
         )
@@ -306,14 +338,14 @@ def test_historical_draft_is_read_only_when_newer_date_exists(sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     imported.manage_date = "20260226"
     store.create_draft(
         imported,
         expected_trade_date="20260227",
-        ptrade_json_path="/tmp/ptrade_data/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
 
     assert store.load_draft("20260225").read_only is True
@@ -327,7 +359,7 @@ def test_order_confirmation_change_delete_and_restore(sqlite_conn):
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
 
     order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
@@ -356,7 +388,7 @@ def test_exported_draft_stays_modified_after_multiple_edits(sqlite_conn):
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
     store.confirm_order(order_id)
@@ -376,7 +408,7 @@ def test_save_and_confirm_order_updates_values_and_confirmation_together(sqlite_
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
 
@@ -400,7 +432,7 @@ def test_decimal_values_are_persisted_without_float_rounding(sqlite_conn):
         create_imported(),
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("0.29"), 100)
 

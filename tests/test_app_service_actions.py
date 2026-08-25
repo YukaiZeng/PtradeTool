@@ -211,11 +211,11 @@ def test_daily_quote_no_data_is_temporarily_suppressed_but_request_failure_is_no
 
 def test_json_sync_rolls_back_ptrade_changes_when_order_replacement_fails(sqlite_conn, tmp_path, monkeypatch):
     service, draft, order_dir = make_service(sqlite_conn, tmp_path)
-    ptrade_path = tmp_path / "ptrade_data" / "20260225.json"
+    ptrade_path = tmp_path / "ptrade_data" / "ptrade_20260225.json"
     original_cash = sqlite_conn.execute(
         "select cash from fund_snapshots where manage_date = ?", (draft.manage_date,)
     ).fetchone()["cash"]
-    (order_dir / "20260225.json").write_text("{}", encoding="utf-8")
+    (order_dir / "order_20260225.json").write_text("{}", encoding="utf-8")
     original_replace_orders = service.drafts.replace_orders
 
     def fail_after_order_replace(*args, **kwargs):
@@ -263,7 +263,7 @@ def test_export_draft_writes_file_and_marks_exported(sqlite_conn, tmp_path):
     validation = service.export_draft("20260225")
 
     assert validation.can_export is True
-    assert (order_dir / "20260225.json").exists()
+    assert (order_dir / "order_20260225.json").exists()
     assert service.load_draft("20260225").export_state == "exported"
 
 
@@ -274,8 +274,8 @@ def test_export_draft_uses_current_editable_manage_date_for_read_only_state(sqli
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
     service.update_and_confirm_order(order_id, price=Decimal("11.4"), shares=1400, order_type="buy_limit")
@@ -301,7 +301,7 @@ def test_sync_json_to_draft_replaces_orders_from_export_json(sqlite_conn, tmp_pa
     service, draft, order_dir = make_service(sqlite_conn, tmp_path)
     stale_id = service.drafts.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_limit", Decimal("8.8"), 1000)
     service.update_and_confirm_order(stale_id, price=Decimal("8.8"), shares=1000, order_type="buy_limit")
-    order_path = order_dir / "20260225.json"
+    order_path = order_dir / "order_20260225.json"
     order_path.write_text(
         json.dumps(
             {
@@ -335,7 +335,7 @@ def test_sync_json_to_draft_clears_orders_for_empty_export_json(sqlite_conn, tmp
     service, draft, order_dir = make_service(sqlite_conn, tmp_path)
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("11.4"), 1400)
     service.update_and_confirm_order(order_id, price=Decimal("11.4"), shares=1400, order_type="buy_limit")
-    (order_dir / "20260225.json").write_text("{}", encoding="utf-8")
+    (order_dir / "order_20260225.json").write_text("{}", encoding="utf-8")
 
     synced = service.sync_json_to_draft("20260225")
 
@@ -344,7 +344,7 @@ def test_sync_json_to_draft_clears_orders_for_empty_export_json(sqlite_conn, tmp
 
 def test_sync_json_to_draft_updates_fund_and_hold_from_ptrade_json(sqlite_conn, tmp_path):
     service, draft, _ = make_service(sqlite_conn, tmp_path)
-    ptrade_path = tmp_path / "ptrade_data" / "20260225.json"
+    ptrade_path = tmp_path / "ptrade_data" / "ptrade_20260225.json"
     data = json.loads(ptrade_path.read_text(encoding="utf-8"))
     data["Fund"]["cash"] = 1000
     data["Hold"]["002153.SZ"]["last_price"] = 12.34
@@ -363,16 +363,16 @@ def test_sync_json_to_draft_updates_fund_and_hold_from_ptrade_json(sqlite_conn, 
 
 def test_sync_json_to_draft_can_update_historical_manage_date(sqlite_conn, tmp_path):
     service, _, order_dir = make_service(sqlite_conn, tmp_path, now_provider=lambda: datetime(2026, 2, 26, 17, 31))
-    draft = service.import_ptrade_json(tmp_path / "ptrade_data" / "20260225.json")
+    draft = service.import_ptrade_json(tmp_path / "ptrade_data" / "ptrade_20260225.json")
     imported = parse_ptrade_json(FIXTURE, FakeStockMatcher())
     imported.manage_date = "20260226"
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
-    (order_dir / "20260225.json").write_text(
+    (order_dir / "order_20260225.json").write_text(
         json.dumps({"600000.SH": {"stock_name": "浦发银行", "buy_stop": [{"price": 10, "shares": 1000}]}}, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -386,7 +386,7 @@ def test_sync_json_to_draft_can_update_historical_manage_date(sqlite_conn, tmp_p
 
 def test_service_rejects_interactive_changes_to_historical_draft(sqlite_conn, tmp_path):
     service, _, _ = make_service(sqlite_conn, tmp_path, now_provider=lambda: datetime(2026, 2, 26, 17, 31))
-    draft = service.import_ptrade_json(tmp_path / "ptrade_data" / "20260225.json")
+    draft = service.import_ptrade_json(tmp_path / "ptrade_data" / "ptrade_20260225.json")
     order_id = service.drafts.add_order(draft.manage_date, "002153.SZ", "test", "buy_limit", Decimal("11.4"), 1400)
 
     with pytest.raises(PermissionError):

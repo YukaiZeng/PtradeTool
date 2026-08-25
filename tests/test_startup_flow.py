@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from ptrade_order_tool.app_service import AppService, find_latest_ptrade_json
+from ptrade_order_tool.app_service import AppService, find_latest_ptrade_json, migrate_configured_json_filenames
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.db import initialize_schema
 from ptrade_order_tool.data.ptrade_importer import parse_ptrade_json
@@ -27,7 +27,65 @@ def test_find_latest_ptrade_json_ignores_invalid_names(tmp_path):
     (tmp_path / "ptrade_20260226.json").write_text("{}", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("", encoding="utf-8")
 
-    assert find_latest_ptrade_json(str(tmp_path)).name == "20260225.json"
+    assert find_latest_ptrade_json(str(tmp_path)).name == "ptrade_20260226.json"
+
+
+def test_configured_json_migration_renames_files_and_updates_session_paths(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    old_ptrade = ptrade_dir / "20260225.json"
+    old_order = order_dir / "20260225.json"
+    old_ptrade.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    old_order.write_text("{}", encoding="utf-8")
+    sqlite_conn.execute(
+        """
+        insert into sessions (
+            manage_date, expected_trade_date, ptrade_json_path, export_json_path,
+            export_state, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("20260225", None, str(old_ptrade), str(old_order), "draft", "now", "now"),
+    )
+    sqlite_conn.commit()
+
+    result = migrate_configured_json_filenames(sqlite_conn, str(ptrade_dir), str(order_dir))
+    row = sqlite_conn.execute("select ptrade_json_path, export_json_path from sessions where manage_date = ?", ("20260225",)).fetchone()
+
+    assert not old_ptrade.exists()
+    assert not old_order.exists()
+    assert result.conflicts == ()
+    assert row["ptrade_json_path"] == str(ptrade_dir / "ptrade_20260225.json")
+    assert row["export_json_path"] == str(order_dir / "order_20260225.json")
+
+
+def test_configured_json_migration_uses_prefixed_path_when_legacy_conflicts(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    ptrade_dir.mkdir()
+    legacy = ptrade_dir / "20260225.json"
+    target = ptrade_dir / "ptrade_20260225.json"
+    legacy.write_text("legacy", encoding="utf-8")
+    target.write_text("prefixed", encoding="utf-8")
+    sqlite_conn.execute(
+        """
+        insert into sessions (
+            manage_date, expected_trade_date, ptrade_json_path, export_json_path,
+            export_state, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("20260225", None, str(legacy), "", "draft", "now", "now"),
+    )
+    sqlite_conn.commit()
+
+    result = migrate_configured_json_filenames(sqlite_conn, str(ptrade_dir), "")
+    row = sqlite_conn.execute("select ptrade_json_path from sessions where manage_date = ?", ("20260225",)).fetchone()
+
+    assert result.conflicts == ((legacy, target),)
+    assert legacy.exists()
+    assert row["ptrade_json_path"] == str(target)
 
 
 def test_open_latest_on_startup_creates_draft(sqlite_conn, tmp_path):
@@ -36,7 +94,7 @@ def test_open_latest_on_startup_creates_draft(sqlite_conn, tmp_path):
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    latest = ptrade_dir / "20260225.json"
+    latest = ptrade_dir / "ptrade_20260225.json"
     latest.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     service = AppService(
@@ -60,12 +118,12 @@ def test_open_latest_on_startup_inherits_nearest_effective_stock_order_day(sqlit
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    (ptrade_dir / "20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-    (order_dir / "20260224.json").write_text(
+    (ptrade_dir / "ptrade_20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (order_dir / "order_20260224.json").write_text(
         '{"002153.SZ": {"stock_name": "石基信息", "sell_profit": [{"price": 12.65, "shares": 2800}], "sell_loss": [{"price": 10.99, "shares": 2800}]}}',
         encoding="utf-8",
     )
-    (order_dir / "20260225.json").write_text(
+    (order_dir / "order_20260225.json").write_text(
         '{"300251.SZ": {"stock_name": "光线传媒", "sell_profit": [{"price": 12.66, "shares": 100}]}}',
         encoding="utf-8",
     )
@@ -89,14 +147,54 @@ def test_open_latest_on_startup_inherits_nearest_effective_stock_order_day(sqlit
     ]
 
 
+def test_open_latest_on_startup_inherits_only_immediate_previous_pullback_plan(sqlite_conn, tmp_path):
+    initialize_schema(sqlite_conn)
+    ptrade_dir = tmp_path / "ptrade_data"
+    order_dir = tmp_path / "order_data"
+    ptrade_dir.mkdir()
+    order_dir.mkdir()
+    (ptrade_dir / "ptrade_20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (order_dir / "order_20260224.json").write_text(
+        '{"000001.SZ": {"stock_name": "平安银行", "buy_limit": [{"price": 8.00, "shares": 1000}]}}',
+        encoding="utf-8",
+    )
+    (order_dir / "order_20260225.json").write_text(
+        (
+            '{"600000.SH": {"stock_name": "浦发银行", '
+            '"buy_limit": [{"price": 9.50, "shares": 1000}], '
+            '"sell_profit": [{"price": 10.50, "shares": 1000}], '
+            '"sell_loss": [{"price": 9.00, "shares": 1000}]}, '
+            '"002153.SZ": {"stock_name": "石基信息", '
+            '"buy_limit": [{"price": 10.00, "shares": 1000}]}}'
+        ),
+        encoding="utf-8",
+    )
+    service = AppService(
+        sqlite_conn,
+        AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
+        FakeStockMatcher(),
+        setup_calendar(sqlite_conn),
+    )
+
+    draft = service.open_latest_on_startup(now=datetime(2026, 2, 26, 17, 31)).draft
+
+    pullback_stock = next(stock for stock in draft.stocks if stock.ts_code == "600000.SH")
+    assert pullback_stock.is_holding is False
+    assert [order.order_type for order in pullback_stock.orders] == ["buy_limit", "sell_profit", "sell_loss"]
+    assert all(order.confirmed is False for order in pullback_stock.orders)
+    assert all(stock.ts_code != "000001.SZ" for stock in draft.stocks)
+    holding_stock = next(stock for stock in draft.stocks if stock.ts_code == "002153.SZ")
+    assert all(order.order_type != "buy_limit" for order in holding_stock.orders)
+
+
 def test_order_inheritance_lookback_is_limited_to_three_trade_days(sqlite_conn, tmp_path):
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    (ptrade_dir / "20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-    (order_dir / "20260222.json").write_text(
+    (ptrade_dir / "ptrade_20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (order_dir / "order_20260222.json").write_text(
         '{"002153.SZ": {"stock_name": "石基信息", "sell_profit": [{"price": 12.65, "shares": 2800}]}}',
         encoding="utf-8",
     )
@@ -130,7 +228,7 @@ def test_open_latest_on_startup_does_not_overwrite_existing_draft(sqlite_conn, t
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    latest = ptrade_dir / "20260225.json"
+    latest = ptrade_dir / "ptrade_20260225.json"
     latest.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
@@ -159,7 +257,7 @@ def test_open_latest_on_startup_replaces_blank_same_date_draft(sqlite_conn, tmp_
         setup_calendar(sqlite_conn),
     )
     service.open_blank_manage_date("20260225")
-    latest = ptrade_dir / "20260225.json"
+    latest = ptrade_dir / "ptrade_20260225.json"
     latest.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     draft = service.open_latest_on_startup(now=datetime(2026, 2, 25, 17, 31)).draft
@@ -175,7 +273,7 @@ def test_reimport_manage_date_overwrites_existing_draft(sqlite_conn, tmp_path):
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    latest = ptrade_dir / "20260225.json"
+    latest = ptrade_dir / "ptrade_20260225.json"
     latest.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
@@ -198,7 +296,7 @@ def test_import_ptrade_json_opens_manual_file(sqlite_conn, tmp_path):
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    manual = ptrade_dir / "20260225.json"
+    manual = ptrade_dir / "ptrade_20260225.json"
     manual.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
@@ -219,7 +317,7 @@ def test_import_ptrade_json_replaces_blank_same_date_draft(sqlite_conn, tmp_path
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    manual = ptrade_dir / "20260225.json"
+    manual = ptrade_dir / "ptrade_20260225.json"
     manual.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
@@ -244,7 +342,7 @@ def test_import_ptrade_json_does_not_overwrite_edited_blank_draft(sqlite_conn, t
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    manual = ptrade_dir / "20260225.json"
+    manual = ptrade_dir / "ptrade_20260225.json"
     manual.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
@@ -273,7 +371,7 @@ def test_reimport_current_draft_uses_original_ptrade_json(sqlite_conn, tmp_path)
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    manual = ptrade_dir / "20260225.json"
+    manual = ptrade_dir / "ptrade_20260225.json"
     manual.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
@@ -342,8 +440,8 @@ def test_open_latest_on_startup_keeps_previous_trade_day_before_cutoff(sqlite_co
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    (ptrade_dir / "20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-    (ptrade_dir / "20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (ptrade_dir / "ptrade_20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (ptrade_dir / "ptrade_20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
         AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
@@ -364,8 +462,8 @@ def test_open_latest_on_startup_switches_to_current_trade_day_after_cutoff(sqlit
     order_dir = tmp_path / "order_data"
     ptrade_dir.mkdir()
     order_dir.mkdir()
-    (ptrade_dir / "20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
-    (ptrade_dir / "20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (ptrade_dir / "ptrade_20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (ptrade_dir / "ptrade_20260226.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     service = AppService(
         sqlite_conn,
         AppConfig(ptrade_data_dir=str(ptrade_dir), order_data_dir=str(order_dir)),
@@ -406,15 +504,15 @@ def test_previous_trade_day_stays_editable_before_cutoff_when_current_session_ex
     service.drafts.create_draft(
         imported,
         expected_trade_date="20260226",
-        ptrade_json_path="/tmp/ptrade_data/20260225.json",
-        export_json_path="/tmp/order_data/20260225.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     imported.manage_date = "20260226"
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/ptrade_data/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
 
     assert service.load_draft("20260225").read_only is False
@@ -442,7 +540,7 @@ def test_list_manage_dates_includes_continuous_trade_days_from_previous_trade_da
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"
     ptrade_dir.mkdir()
-    (ptrade_dir / "20260616.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (ptrade_dir / "ptrade_20260616.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     calendar = TradeCalendar(sqlite_conn)
     calendar.upsert_trade_calendar(
         [
@@ -463,7 +561,7 @@ def test_maintain_trade_calendar_starts_from_earliest_ptrade_json(sqlite_conn, t
     initialize_schema(sqlite_conn)
     ptrade_dir = tmp_path / "ptrade_data"
     ptrade_dir.mkdir()
-    (ptrade_dir / "20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    (ptrade_dir / "ptrade_20260225.json").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / ".env").write_text("TUSHARE_TOKEN=abc\n", encoding="utf-8")
     calendar = TradeCalendar(sqlite_conn)
     captured = {}

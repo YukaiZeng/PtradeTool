@@ -70,8 +70,8 @@ def test_service_lists_manage_dates(sqlite_conn, tmp_path):
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
 
     assert service.list_manage_dates() == ["20260226", "20260225", "20260224"]
@@ -84,8 +84,8 @@ def test_date_combo_switches_to_historical_read_only(qtbot, sqlite_conn, tmp_pat
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     window = MainWindow(service.load_draft("20260226"), service)
     qtbot.addWidget(window)
@@ -108,8 +108,8 @@ def test_date_combo_activation_switches_date(qtbot, sqlite_conn, tmp_path):
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     window = MainWindow(service.load_draft("20260226"), service)
     qtbot.addWidget(window)
@@ -131,8 +131,8 @@ def test_switching_dates_keeps_running_daily_quote_workers_alive(qtbot, sqlite_c
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     workers = []
 
@@ -233,8 +233,8 @@ def test_stale_daily_quote_rows_are_cached_without_refreshing_current_ui(qtbot, 
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     window = MainWindow(service.load_draft("20260226"), service, auto_update_stock_basic=False, auto_update_daily_quotes=False)
     qtbot.addWidget(window)
@@ -269,8 +269,8 @@ def test_rapid_date_switching_keeps_state_and_worker_lifecycle_stable(qtbot, sql
         service.drafts.create_draft(
             imported,
             expected_trade_date=None,
-            ptrade_json_path=f"/tmp/{manage_date}.json",
-            export_json_path=f"/tmp/order_data/{manage_date}.json",
+            ptrade_json_path=f"/tmp/ptrade_data/ptrade_{manage_date}.json",
+            export_json_path=f"/tmp/order_data/order_{manage_date}.json",
         )
     workers = []
 
@@ -328,8 +328,8 @@ def test_historical_draft_disables_editing_controls(qtbot, sqlite_conn, tmp_path
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     service._now_provider = lambda: datetime(2026, 2, 26, 17, 31)
     window = MainWindow(service.load_draft("20260225"), service, auto_update_stock_basic=False)
@@ -354,8 +354,8 @@ def test_historical_draft_blocks_manual_import_handler(qtbot, sqlite_conn, tmp_p
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     service._now_provider = lambda: datetime(2026, 2, 26, 17, 31)
     window = MainWindow(service.load_draft("20260225"), service, auto_update_stock_basic=False)
@@ -376,8 +376,8 @@ def test_delete_history_action_removes_selected_date(qtbot, sqlite_conn, tmp_pat
     service.drafts.create_draft(
         imported,
         expected_trade_date=None,
-        ptrade_json_path="/tmp/20260226.json",
-        export_json_path="/tmp/order_data/20260226.json",
+        ptrade_json_path="/tmp/ptrade_data/ptrade_20260226.json",
+        export_json_path="/tmp/order_data/order_20260226.json",
     )
     window = MainWindow(service.load_draft("20260226"), service, auto_update_stock_basic=False)
     qtbot.addWidget(window)

@@ -23,7 +23,7 @@ def make_store_with_draft(sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     return store, draft
 

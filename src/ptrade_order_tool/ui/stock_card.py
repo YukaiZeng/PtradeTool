@@ -299,8 +299,10 @@ class StockCard(QFrame):
     def align_order_input_digits(self) -> None:
         if not self.order_rows:
             return
-        price_width = max(row.price_input.integer_width() for row in self.order_rows)
-        shares_width = max(row.shares_input.integer_width() for row in self.order_rows)
+        price_widths = {row.price_input.integer_width() for row in self.order_rows}
+        shares_widths = {row.shares_input.integer_width() for row in self.order_rows}
+        price_width = None if len(price_widths) == 1 else max(price_widths)
+        shares_width = None if len(shares_widths) == 1 else max(shares_widths)
         for row in self.order_rows:
             row.price_input.set_visual_integer_width(price_width)
             row.shares_input.set_visual_integer_width(shares_width)

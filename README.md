@@ -11,7 +11,7 @@ Ptrade Order Tool 是一个用于维护 PTrade 日常交易计划的桌面工具
 
 ## 核心能力
 
-- 自动或手动导入 `ptrade_data/YYYYMMDD.json`；没有盘后 JSON 时可创建空白交易日。
+- 自动或手动导入 `ptrade_data/ptrade_YYYYMMDD.json`；没有盘后 JSON 时可创建空白交易日。
 - 解析 `Fund`、`Hold`，展示账户总额、持仓市值、可用余额、开仓金额。
 - 标准券等非股票资产不进入股票列表；其市值用于校准可用余额。
 - 按 `全部 / 开仓 / 持仓` 查看股票单元，支持历史日期只读回看。
@@ -47,14 +47,14 @@ PtradeTool/
 
 1. 打开桌面工具。
 2. 在“设置目录及Token”中配置：
-   - PTrade 盘后目录：存放 `ptrade_data/YYYYMMDD.json`。
-   - 订单导出目录：生成 `order_data/YYYYMMDD.json`。
+   - PTrade 盘后目录：存放 `ptrade_data/ptrade_YYYYMMDD.json`。
+   - 订单导出目录：生成 `order_data/order_YYYYMMDD.json`。
    - Tushare Token：维护股票基础数据、交易日历和可选日线行情。
 3. 软件优先打开最新盘后 JSON；找不到时打开最近交易日的空白交易单。
 4. 检查账户信息，维护开仓、止盈、止损订单。
 5. 每条订单确认后执行导出。
 6. 如当前管理日期的盘后 JSON 或导出 JSON 与界面不一致，可在“更多”中执行“同步JSON到界面”；盘后 JSON 同步 `Fund/Hold`，导出 JSON 同步订单计划并设为已确认。
-7. 将导出的 `order_data/YYYYMMDD.json` 放到 PTrade 研究环境对应目录。
+7. 将导出的 `order_data/order_YYYYMMDD.json` 放到 PTrade 研究环境对应目录。
 8. 在 PTrade 中运行 [in-app.py](src/ptrade_order_tool/runtime/in-app.py) 进行次日自动监控。
 
 ## Tushare Token
@@ -94,6 +94,8 @@ Token 读取优先级：
 
 盘后输入 JSON 以 PTrade 导出格式为准，测试样例见 [tests/fixtures/ptrade_20260225.json](tests/fixtures/ptrade_20260225.json)。
 
+首次启动或保存盘后、交易单目录设置时，应用会将其中旧的 `YYYYMMDD.json` 自动更名为对应的前缀文件。若同日期的新旧文件内容不同，应用不会覆盖新文件；旧文件会保留供人工核对，应用只使用带前缀的新文件。
+
 导入链路使用：
 
 - `Fund.cash`
@@ -112,7 +114,7 @@ Token 读取优先级：
 导出路径：
 
 ```text
-order_data/YYYYMMDD.json
+order_data/order_YYYYMMDD.json
 ```
 
 导出结构：

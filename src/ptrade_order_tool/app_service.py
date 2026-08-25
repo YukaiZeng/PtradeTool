@@ -13,6 +13,14 @@ from zoneinfo import ZoneInfo
 from ptrade_order_tool.config import AppConfig
 from ptrade_order_tool.data.daily_quote_store import DailyQuoteStore
 from ptrade_order_tool.data.draft_store import DraftStore
+from ptrade_order_tool.data.file_naming import (
+    PTRADER_PREFIX,
+    JsonFilenameMigration,
+    migrate_legacy_json_files,
+    order_filename,
+    parse_prefixed_date,
+    ptrade_filename,
+)
 from ptrade_order_tool.data.order_exporter import ORDER_TYPES, build_order_json, export_order_json, validate_export
 from ptrade_order_tool.data.ptrade_importer import StockMatcher, parse_ptrade_json
 from ptrade_order_tool.data.stock_master import load_tushare_token
@@ -21,7 +29,8 @@ from ptrade_order_tool.logging_utils import get_logger
 from ptrade_order_tool.models import DailyQuote, ExportValidation, FundSnapshot, Holding, ImportedPtradeData, OrderType, SessionDraft
 
 
-PTRADER_JSON_RE = re.compile(r"^\d{8}\.json$")
+PTRADER_JSON_RE = re.compile(r"^ptrade_\d{8}\.json$")
+ORDER_JSON_RE = re.compile(r"^order_\d{8}\.json$")
 CURRENT_TRADE_DAY_CUTOFF = time(17, 30)
 INHERITANCE_LOOKBACK_TRADE_DAYS = 3
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -64,6 +73,7 @@ class AppService:
         self.daily_quotes = DailyQuoteStore(conn)
         self._now_provider = now_provider or (lambda: datetime.now(BEIJING_TZ))
         self.logger = get_logger()
+        self._migrate_configured_json_filenames()
 
     def open_latest_on_startup(self, *, today: str | None = None, now: datetime | None = None) -> StartupResult:
         today = today or self._today(now)
@@ -116,6 +126,7 @@ class AppService:
 
     def update_config(self, config: AppConfig) -> None:
         self.config = config
+        self._migrate_configured_json_filenames()
 
     def update_and_confirm_order(
         self,
@@ -492,6 +503,7 @@ class AppService:
         self.logger.info("ptrade_imported path=%s manage_date=%s holdings=%s overwrite=%s", ptrade_json_path, imported.manage_date, len(imported.holdings), overwrite)
         expected_trade_date = self.calendar.next_trade_day(imported.manage_date)
         previous_order_paths = self._previous_order_paths(imported.manage_date)
+        previous_pullback_order_path = self._previous_pullback_order_path(imported.manage_date)
         export_json_path = self._export_json_path(imported.manage_date)
         return self._with_read_only_state(self.drafts.create_draft(
             imported,
@@ -499,6 +511,7 @@ class AppService:
             ptrade_json_path=str(ptrade_json_path),
             export_json_path=export_json_path,
             previous_order_path=previous_order_paths,
+            previous_pullback_order_path=previous_pullback_order_path,
             overwrite=overwrite,
         ))
 
@@ -511,9 +524,17 @@ class AppService:
             previous_day = self.calendar.previous_trade_day(current_date)
             if not previous_day:
                 break
-            paths.append(Path(self.config.order_data_dir) / f"{previous_day}.json")
+            paths.append(Path(self.config.order_data_dir) / order_filename(previous_day))
             current_date = previous_day
         return paths
+
+    def _previous_pullback_order_path(self, manage_date: str) -> Path | None:
+        if not self.config.order_data_dir:
+            return None
+        previous_day = self.calendar.previous_trade_day(manage_date)
+        if not previous_day:
+            return None
+        return Path(self.config.order_data_dir) / order_filename(previous_day)
 
     def _blank_draft_can_be_replaced(self, manage_date: str, *, raise_on_edited: bool) -> bool:
         try:
@@ -557,7 +578,7 @@ class AppService:
     def _export_json_path(self, manage_date: str) -> str:
         if not self.config.order_data_dir:
             return ""
-        return str(Path(self.config.order_data_dir) / f"{manage_date}.json")
+        return str(Path(self.config.order_data_dir) / order_filename(manage_date))
 
     def _empty_fund(self) -> FundSnapshot:
         return FundSnapshot(
@@ -592,7 +613,17 @@ class AppService:
 
     def _earliest_ptrade_json_date(self) -> str:
         path = find_earliest_ptrade_json(self.config.ptrade_data_dir)
-        return path.stem if path else ""
+        return parse_prefixed_date(path.name, PTRADER_PREFIX) if path else ""
+
+    def _migrate_configured_json_filenames(self) -> JsonFilenameMigration:
+        result = migrate_configured_json_filenames(
+            self.conn,
+            self.config.ptrade_data_dir,
+            self.config.order_data_dir,
+        )
+        for legacy_path, target_path in result.conflicts:
+            self.logger.warning("json_filename_migration_conflict legacy=%s target=%s", legacy_path, target_path)
+        return result
 
     def _manage_date_range_start(self, *, today: str, latest_trade_date: str) -> str:
         earliest_ptrade_date = self._earliest_ptrade_json_date()
@@ -734,13 +765,13 @@ def find_latest_ptrade_json(ptrade_data_dir: str) -> Path | None:
     ]
     if not candidates:
         return None
-    return max(candidates, key=lambda path: path.stem)
+    return max(candidates, key=lambda path: parse_prefixed_date(path.name, PTRADER_PREFIX) or "")
 
 
 def find_ptrade_json_for_date(ptrade_data_dir: str, manage_date: str) -> Path | None:
     if not ptrade_data_dir:
         return None
-    path = Path(ptrade_data_dir) / f"{manage_date}.json"
+    path = Path(ptrade_data_dir) / ptrade_filename(manage_date)
     if path.is_file() and PTRADER_JSON_RE.match(path.name):
         return path
     return None
@@ -749,8 +780,8 @@ def find_ptrade_json_for_date(ptrade_data_dir: str, manage_date: str) -> Path | 
 def find_order_json_for_date(order_data_dir: str, manage_date: str) -> Path | None:
     if not order_data_dir:
         return None
-    path = Path(order_data_dir) / f"{manage_date}.json"
-    if path.is_file() and PTRADER_JSON_RE.match(path.name):
+    path = Path(order_data_dir) / order_filename(manage_date)
+    if path.is_file() and ORDER_JSON_RE.match(path.name):
         return path
     return None
 
@@ -768,7 +799,33 @@ def find_earliest_ptrade_json(ptrade_data_dir: str) -> Path | None:
     ]
     if not candidates:
         return None
-    return min(candidates, key=lambda path: path.stem)
+    return min(candidates, key=lambda path: parse_prefixed_date(path.name, PTRADER_PREFIX) or "")
+
+
+def migrate_configured_json_filenames(
+    conn: sqlite3.Connection,
+    ptrade_data_dir: str,
+    order_data_dir: str,
+) -> JsonFilenameMigration:
+    result = migrate_legacy_json_files(ptrade_data_dir, order_data_dir)
+    path_updates = (*result.renamed, *result.conflicts)
+    if not path_updates:
+        return result
+    try:
+        for legacy_path, target_path in path_updates:
+            conn.execute(
+                "update sessions set ptrade_json_path = ? where ptrade_json_path = ?",
+                (str(target_path), str(legacy_path)),
+            )
+            conn.execute(
+                "update sessions set export_json_path = ? where export_json_path = ?",
+                (str(target_path), str(legacy_path)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return result
 
 
 def _decimal_key(value: Decimal | int | float | str) -> str:

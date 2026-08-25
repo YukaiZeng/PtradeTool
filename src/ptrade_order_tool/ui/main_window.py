@@ -1767,7 +1767,7 @@ class MainWindow(QMainWindow):
             self,
             "选择 Ptrade 盘后 JSON",
             self.service.config.ptrade_data_dir,
-            "JSON Files (*.json)",
+            "Ptrade JSON (ptrade_*.json)",
         )
         if not path:
             return

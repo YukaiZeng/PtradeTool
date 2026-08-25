@@ -27,7 +27,7 @@ def make_fixture_draft(sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
 
 
@@ -380,6 +380,35 @@ def test_stock_card_realigns_order_digits_when_high_digit_width_changes(qtbot):
     assert peer_row.shares_input.findChildren(QWidget, "digit_alignment_placeholder") == []
     assert edited_row.order.confirmed is True
     assert changed_rows == []
+
+
+def test_stock_card_clears_digit_alignment_spacing_after_all_rows_shrink(qtbot):
+    stock = StockDraft(
+        ts_code="600000.SH",
+        stock_name="natural width",
+        is_holding=False,
+        orders=[
+            OrderDraft("buy_limit", Decimal("9.50"), 1400),
+            OrderDraft("buy_limit", Decimal("8.50"), 1500),
+        ],
+    )
+    card = StockCard(stock)
+    qtbot.addWidget(card)
+
+    for row in card.order_rows:
+        row.price_input.add_high_digit()
+        row.shares_input.add_high_digit()
+    for row in card.order_rows:
+        row.price_input.remove_high_digit()
+        row.shares_input.remove_high_digit()
+
+    for row in card.order_rows:
+        assert row.price_input.visual_integer_width() == row.price_input.integer_width()
+        assert row.shares_input.visual_integer_width() == row.shares_input.integer_width()
+        assert row.price_input._visual_integer_width is None
+        assert row.shares_input._visual_integer_width is None
+        assert row.price_input.findChildren(QWidget, "digit_alignment_placeholder") == []
+        assert row.shares_input.findChildren(QWidget, "digit_alignment_placeholder") == []
 
 
 def test_stock_card_hides_empty_order_body_for_empty_sections(qtbot):
@@ -961,7 +990,7 @@ def test_stock_card_shows_quantity_warning_and_order_status(qtbot, sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     order_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1400)
     store.confirm_order(order_id)
@@ -1031,7 +1060,7 @@ def test_buy_orders_show_amount_and_cash_summary(qtbot, sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     order_id = store.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_stop", Decimal("9.80"), 1000)
     window = MainWindow(store.load_draft("20260225"))
@@ -1071,7 +1100,7 @@ def test_order_row_uses_context_menu_for_digit_width(qtbot, sqlite_conn):
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path="/tmp/order_data/20260225.json",
+        export_json_path="/tmp/order_data/order_20260225.json",
     )
     order_id = store.add_order(draft.manage_date, "300162.SZ", "雷曼光电", "buy_stop", Decimal("9.80"), 1000)
     window = MainWindow(store.load_draft("20260225"))

@@ -19,6 +19,8 @@ def test_ptrade_runtime_reads_all_exported_order_types():
 
     for order_type in ORDER_TYPES:
         assert f'info_dict.get("{order_type}"' in runtime_source
+    assert 'f"order_{order_date}.json"' in runtime_source
+    assert 'f"ptrade_{g.current_date}.json"' in runtime_source
 
 
 def test_exported_order_json_matches_ptrade_runtime_contract(sqlite_conn, tmp_path):
@@ -29,14 +31,14 @@ def test_exported_order_json_matches_ptrade_runtime_contract(sqlite_conn, tmp_pa
         imported,
         expected_trade_date="20260226",
         ptrade_json_path=str(PTRADER_FIXTURE),
-        export_json_path=str(tmp_path / "20260225.json"),
+        export_json_path=str(tmp_path / "order_20260225.json"),
     )
     buy_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "buy_limit", Decimal("5"), 1000)
     profit_id = store.add_order(draft.manage_date, "002153.SZ", "石基信息", "sell_profit", Decimal("12.65"), 1000)
     store.confirm_order(buy_id)
     store.confirm_order(profit_id)
 
-    output_path = tmp_path / "20260225.json"
+    output_path = tmp_path / "order_20260225.json"
     export_order_json(store.load_draft(draft.manage_date), output_path)
     exported = json.loads(output_path.read_text(encoding="utf-8"))
     order = exported["002153.SZ"]["buy_limit"][0]
